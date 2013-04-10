@@ -63,7 +63,9 @@ class TestContinuation
     return a + b;
   }
   
-  static function xx(xxx):Int return 1
+  static function xx(xxx):Int {
+    return 1;
+  }
 
   static function read(n:Int, handler:Int -> Void):Void
   {
@@ -182,9 +184,6 @@ class TestContinuation
           {
             foo(read(x[0]).async()).async();
           }
-          catch (x:IntHash<Dynamic>)
-          {
-          }
           catch (x:String)
           {
             read(3).async();
@@ -221,7 +220,11 @@ class TestContinuation
       var c = 1, a, b = doubleResult().async();
       return tuple2(c, a).async();
     });
-    var asyncDo = callback(read, 3);
+    #if haxe3
+    var asyncDo = read.bind( 3 );
+    #else
+    var asyncDo = callback(read, 3 );
+    #end
     Continuation.cpsFunction(function myFunction():Int
     {
       var xxx = bar(234, "foo", 34.5).async();

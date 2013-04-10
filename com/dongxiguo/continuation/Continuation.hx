@@ -47,7 +47,11 @@ class Continuation
 
     In wrapped function, you can use <code>.async()</code> postfix to invoke other asynchronous functions.
    **/
+  #if haxe3
+  macro public static function cpsFunction(expr:Expr):Expr
+  #else
   @:macro public static function cpsFunction(expr:Expr):Expr
+  #end
   {
     switch (expr.expr)
     {
@@ -115,7 +119,11 @@ class Continuation
 
     In these methods, you can use <code>.async()</code> postfix to invoke other asynchronous functions.
   **/
+  #if haxe3
+  @:noUsing macro public static function cpsByMeta(metaName:String):Array<Field>
+  #else
   @:noUsing @:macro public static function cpsByMeta(metaName:String):Array<Field>
+  #end
   {
     var bf = Context.getBuildFields();
     for (field in bf)
@@ -239,7 +247,7 @@ class ContinuationDetail
   {
     switch (origin.expr)
     {
-      #if haxe_211
+      #if (haxe_211 || haxe3)
       case EMeta(_, _):
       {
         return rest([origin]);
@@ -426,7 +434,7 @@ class ContinuationDetail
         }
         var isVoidTry = switch (Context.follow(Context.typeof(e)))
         {
-          #if haxe_211
+          #if (haxe_211 || haxe3)
           case TAbstract(t, []):
           #else
           case TInst(t, params):
@@ -557,17 +565,17 @@ class ContinuationDetail
       }
       case ESwitch(e, cases, edef):
       {
-        return transform(e, function(eResult)
+        return transform(e, function(eResult) : Expr
         {
           var transformedCases = cases.map(function(c)
           {
             if (c.expr == null)
             {
-              return { expr: rest([]), #if haxe_211 guard: c.guard, #end values: c.values };
+              return { expr: rest([]), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
             }
             else
             {
-              return { expr: transform(c.expr, rest), #if haxe_211 guard: c.guard, #end values: c.values };
+              return { expr: transform(c.expr, rest), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
             }
           }).array();
           var transformedDef = edef == null ? rest([]) : transform(edef, rest);
@@ -1163,7 +1171,11 @@ class ContinuationDetail
   
   #end
   
+  #if haxe3
+  @:noUsing macro public static function runDelayedFunction(id:Int):Expr
+  #else
   @:noUsing @:macro public static function runDelayedFunction(id:Int):Expr
+  #end
   {
     return delayFunctions[id]();
   }
