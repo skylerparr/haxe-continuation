@@ -91,6 +91,7 @@ class Continuation
                 ]),
               expr: ContinuationDetail.transform(
                 originExpr,
+                false,
                 function(transformed)
                 {
                   transformed.push(
@@ -114,15 +115,99 @@ class Continuation
     }
   }
 
+  public static macro function taskFunction(expr:Expr):Expr {
+    switch (expr.expr)
+    {
+      case EFunction(name, f):
+      {
+        var originExpr = f.expr;
+        var voidDef = TPath({
+          sub: null,
+          params: [],
+          pack: [],
+          name: "Void"
+        });
+
+        var transformed = ContinuationDetail.transform(
+          originExpr,
+          true,
+          function(transformed)
+          {
+            transformed.push(
+            {
+              expr: ECall(macro __return, [{expr:EConst(CIdent("null")), pos:originExpr.pos}]),
+              pos: originExpr.pos,
+            });
+            return
+            {
+              pos: originExpr.pos,
+              expr: EBlock(transformed),
+            }
+          }
+        );
+
+        var innerFn = {
+          pos: expr.pos,
+          expr: EFunction(null, {
+            ret: TPath(
+              {
+                sub: null,
+                params: [],
+                pack: [],
+                name: "Void"
+              }),
+            params: [],
+            args:
+              [
+                {
+                  name: "__return",
+                  opt: false,
+                  value: null,
+                  type: f.ret == null ? null : TFunction([f.ret], voidDef)
+                }
+              ],
+            expr: transformed
+          })
+        };
+
+        return
+        {
+          pos: expr.pos,
+          expr: EFunction(
+            name,
+            {
+              ret: TPath(
+                {
+                  sub: null,
+                  params: [f.ret == null ? TPType(voidDef) : TPType(f.ret)],
+                  pack: ["com", "dongxiguo", "continuation"],
+                  name: "Task"
+                }),
+              params: f.params,
+              args: f.args,
+              expr: macro {
+                var __task = new com.dongxiguo.continuation.Task();
+                return __task.run($innerFn);
+              }
+            })
+        };
+      }
+      default:
+      {
+        throw "CPS.cpsFunction expect a function as parameter.";
+      }
+    }
+  }
+
   /**
     When you add <code>@:build(com.dongxiguo.continuation.Continuation.cpsByMeta("metaName"))</code> in front of a class, any method with same metadata name from <code>metaName</code> in that class will be transfromed to CPS function.
 
     In these methods, you can use <code>.async()</code> postfix to invoke other asynchronous functions.
   **/
   #if haxe3
-  @:noUsing macro public static function cpsByMeta(metaName:String):Array<Field>
+  @:noUsing macro public static function cpsByMeta(metaName:String, asTasks:Bool=false):Array<Field>
   #else
-  @:noUsing @:macro public static function cpsByMeta(metaName:String):Array<Field>
+  @:noUsing @:macro public static function cpsByMeta(metaName:String, asTasks:Bool=false):Array<Field>
   #end
   {
     var bf = Context.getBuildFields();
@@ -164,6 +249,7 @@ class Continuation
               var originExpr = f.expr;
               f.expr = ContinuationDetail.transform(
                 originExpr,
+                asTasks,
                 function(transformed)
                 {
                   transformed.push(
@@ -190,6 +276,7 @@ class Continuation
     return bf;
   }
 
+
 }
 
 /**
@@ -214,12 +301,14 @@ class ContinuationDetail
 
   static function transformCondition(
     pos:Position,
+    asTasks:Bool,
     econd:Expr,
     eif:Expr,
     eelse:Null<Expr>, rest:Array<Expr>->Expr):Expr
   {
     return transform(
       econd,
+      asTasks,
       function(econdResult)
       {
         return
@@ -227,23 +316,50 @@ class ContinuationDetail
           pos: pos,
           expr: EIf(
             unpack(econdResult, econd.pos),
-            transform(eif, rest),
-            eelse == null ? rest([]) : transform(eelse, rest)),
+            transform(eif, asTasks, rest),
+            eelse == null ? rest([]) : transform(eelse, asTasks, rest)),
         };
       });
   }
 
-  public static function transform(origin:Expr, rest:Array<Expr>->Expr):Expr
+  public static function transform(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr):Expr
   {
     return delay(
       origin.pos,
       function()
       {
-        return transformNoDelay(origin, rest);
+        return transformNoDelay(origin, asTask, rest);
       });
   }
+
+  static function checkTaskParameter(type:haxe.macro.Type, pos:haxe.macro.Position) : Bool {
+    switch ( type ) {
+    case TFun(_, ret):
+      if ( ret == null ) {
+        Context.error("Function does not return a Task", pos);
+        return false;
+      } else {
+        return checkTaskParameter(Context.follow(ret), pos);
+      }
+    case TInst(classType, typeParams):
+      var classType = classType.get();
+      if ( classType.name != "Task" || classType.pack.join(".") != "com.dongxiguo.continuation" ) {
+        Context.error("value is not a Task", pos);
+      }
+
+      var needParam = true;
+      if ( typeParams.length != 0 ) {
+        switch ( typeParams[0] ) {
+        case TAbstract(t,_): if ( t.get().name == "Void" ) needParam = false;
+        default:
+        }
+      }
+      return needParam;
+    default: Context.error("value is not a Task", pos); return false;
+    }
+  }
     
-  static function transformNoDelay(origin:Expr, rest:Array<Expr>->Expr):Expr
+  static function transformNoDelay(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr):Expr
   {
     switch (origin.expr)
     {
@@ -268,7 +384,7 @@ class ContinuationDetail
           pos: origin.pos,
           expr: EConst(CIdent(breakName))
         };
-        var doBody = transform(e,
+        var doBody = transform(e, asTask,
           function(eResult)
           {
             return
@@ -279,6 +395,7 @@ class ContinuationDetail
           });
         var continueBody = transform(
           econd,
+          asTask,
           function(econdResult)
           {
             return
@@ -347,7 +464,7 @@ class ContinuationDetail
             }
             else
             {
-              return transform(originVar.expr, function(varResult)
+              return transform(originVar.expr, asTask, function(varResult)
               {
                 var v = values.concat([]);
                 if (i + 1 < varResult.length)
@@ -381,6 +498,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -396,6 +514,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -412,6 +531,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -483,6 +603,7 @@ class ContinuationDetail
               {
                 expr: transform(
                   catchBody.expr,
+                  asTask,
                   function(catchResult)
                   {
                     switch (catchResult.length)
@@ -548,6 +669,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -561,11 +683,11 @@ class ContinuationDetail
       }
       case ETernary(econd, eif, eelse):
       {
-        return transformCondition(origin.pos, econd, eif, eelse, rest);
+        return transformCondition(origin.pos, asTask, econd, eif, eelse, rest);
       }
       case ESwitch(e, cases, edef):
       {
-        return transform(e, function(eResult) : Expr
+        return transform(e, asTask, function(eResult) : Expr
         {
           var transformedCases = cases.map(function(c)
           {
@@ -575,10 +697,10 @@ class ContinuationDetail
             }
             else
             {
-              return { expr: transform(c.expr, rest), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
+              return { expr: transform(c.expr, asTask, rest), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
             }
           }).array();
-          var transformedDef = edef == null ? rest([]) : transform(edef, rest);
+          var transformedDef = edef == null ? rest([]) : transform(edef, asTask, rest);
           return
           {
             pos: origin.pos,
@@ -622,7 +744,7 @@ class ContinuationDetail
                         {
                           if (i == originParams.length)
                           {
-                            return transform(e, function(functionResult)
+                            return transform(e, asTask, function(functionResult)
                             {
                               transformedParameters.push(
                               {
@@ -642,6 +764,7 @@ class ContinuationDetail
                           {
                             return transform(
                               originParams[i],
+                              asTask,
                               function(parameterResult:Array<Expr>):Expr
                               {
                                 for (e in parameterResult)
@@ -666,6 +789,7 @@ class ContinuationDetail
         }
         return transform(
           returnExpr,
+          asTask,
           function(eResult)
           {
             return
@@ -682,7 +806,7 @@ class ContinuationDetail
       }
       case EParenthesis(e):
       {
-        return transform(e, rest);
+        return transform(e, asTask, rest);
       }
       case EObjectDecl(originFields):
       {
@@ -703,6 +827,7 @@ class ContinuationDetail
             var originField = originFields[i];
             return transform(
               originField.expr,
+              asTask,
               function(valueResult:Array<Expr>):Expr
               {
                 for (e in valueResult)
@@ -739,6 +864,7 @@ class ContinuationDetail
           {
             return transform(
               originParams[i],
+              asTask,
               function(parameterResult:Array<Expr>):Expr
               {
                 for (e in parameterResult)
@@ -758,7 +884,7 @@ class ContinuationDetail
       }
       case EIf(econd, eif, eelse):
       {
-        return transformCondition(origin.pos, econd, eif, eelse, rest);
+        return transformCondition(origin.pos, asTask, econd, eif, eelse, rest);
       }
       case EFunction(_, _):
       {
@@ -809,6 +935,7 @@ class ContinuationDetail
                   $expr;
                 }
               },
+              asTask,
               rest);
           }
           default:
@@ -822,6 +949,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -853,6 +981,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -868,6 +997,7 @@ class ContinuationDetail
       {
         return transform(
           e,
+          asTask,
           function(eResult)
           {
             return rest(
@@ -893,99 +1023,27 @@ class ContinuationDetail
                 {
                   case ECall(e, originParams):
                   {
-                    function transformNext(i:Int, transformedParameters:Array<Expr>):Expr
-                    {
-                      if (i == originParams.length)
-                      {
-                        return transform(e, function(functionResult)
-                        {
-                          var handlerArgResult = [];
-                          var handlerArgDefs = [];
-                          switch (Context.follow(Context.typeof(unpack(functionResult, e.pos))))
-                          {
-                            case TFun(args, _):
-                            {
-                              switch (args[args.length - 1].t)
-                              {
-                                case TFun(args, _):
-                                {
-                                  for (handlerArg in args)
-                                  {
-                                    var name = "__parameter_" + seed++;
-                                    handlerArgResult.push(
-                                      {
-                                        pos: origin.pos,
-                                        expr: EConst(CIdent(name))
-                                      });
-                                    handlerArgDefs.push(
-                                      {
-                                        opt: handlerArg.opt,
-                                        name: name,
-                                        type: null,
-                                        value: null
-                                      });
-                                  }
-                                }
-                                default:
-                                {
-                                  var name = "__parameter_" + seed++;
-                                  handlerArgResult.push(
-                                    {
-                                      pos: origin.pos,
-                                      expr: EConst(CIdent(name))
-                                    });
-                                  handlerArgDefs.push(
-                                    {
-                                      opt: true,
-                                      name: name,
-                                      type: null,
-                                      value: null
-                                    });
-                                }
-                              }
-                            }
-                            default:
-                            {
-                              Context.error("First parameter of async() must be a function.", e.pos);
-                            }
-                          }
-                          transformedParameters.push(
-                          {
-                            pos: origin.pos,
-                            expr: EFunction(null,
-                            {
-                              ret: null,
-                              params: [],
-                              expr: rest(handlerArgResult),
-                              args: handlerArgDefs
-                            })
-                          });
-                          return
-                          {
-                            pos: origin.pos,
-                            expr: ECall(
-                              unpack(functionResult, origin.pos),
-                              transformedParameters),
-                          };
-                        });
-                      }
-                      else
-                      {
-                        return transform(
-                          originParams[i],
-                          function(parameterResult:Array<Expr>):Expr
-                          {
-                            for (e in parameterResult)
-                            {
-                              transformedParameters.push(e);
-                            }
-                            return transformNext(i + 1, transformedParameters);
-                          });
-                      }
-                    }
-                    return transformNext(0, []);
+                    return transformAsync(e, origin.pos, asTask, originParams, rest);
                   }
                   default:
+                  {
+                    if ( asTask ) 
+                    {
+                      // allow taskVariable.async()
+                      switch ( Context.follow(Context.typeof(prefixCall)) )
+                      {
+                        case TInst(classType, _):
+                        {
+                          var classType = classType.get();
+                          if ( classType.name == "Task" && classType.pack.join(".") == "com.dongxiguo.continuation" )
+                          {
+                            return transformAsync(prefixCall, origin.pos, asTask, null, rest);
+                          }
+                        }
+                        default:
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -996,10 +1054,8 @@ class ContinuationDetail
         {
           if (i == originParams.length)
           {
-            return transform(e, function(functionResult)
+            return transform(e, asTask, function(functionResult)
             {
-              var handlerArgResult = [];
-              var handlerArgDefs = [];
               return rest([
               {
                 pos: origin.pos,
@@ -1013,6 +1069,7 @@ class ContinuationDetail
           {
             return transform(
               originParams[i],
+              asTask,
               function(parameterResult:Array<Expr>):Expr
               {
                 for (e in parameterResult)
@@ -1039,11 +1096,11 @@ class ContinuationDetail
         {
           if (i == exprs.length - 1)
           {
-            return transform(exprs[i], rest);
+            return transform(exprs[i], asTask, rest);
           }
           else
           {
-            return transform(exprs[i], function(transformedLine)
+            return transform(exprs[i], asTask, function(transformedLine)
             {
               transformedLine.push(transformNext(i + 1));
               return
@@ -1060,9 +1117,10 @@ class ContinuationDetail
       {
         return transform(
           e1,
+          asTask,
           function(e1Result)
           {
-            return transform(e2, function(e2Result)
+            return transform(e2, asTask, function(e2Result)
             {
               return rest(
                 [
@@ -1095,6 +1153,7 @@ class ContinuationDetail
           {
             return transform(
               originParams[i],
+              asTask,
               function(parameterResult:Array<Expr>):Expr
               {
                 for (e in parameterResult)
@@ -1111,9 +1170,10 @@ class ContinuationDetail
       {
         return transform(
           e1,
+          asTask,
           function(e1Result)
           {
-            return transform(e2, function(e2Result)
+            return transform(e2, asTask, function(e2Result)
             {
               return rest(
                 [
@@ -1128,6 +1188,139 @@ class ContinuationDetail
           });
       }
     }
+  }
+
+  static function transformAsync(e:Expr, pos:Position, asTask:Bool, originParams:Array<Expr>, rest:Array<Expr>->Expr) : Expr {
+    function transformNext(i:Int, transformedParameters:Array<Expr>):Expr
+    {
+      if (originParams == null || i == originParams.length)
+      {
+        return transform(e, asTask, function(functionResult)
+        {
+          if ( asTask ) {
+            var handlerArgResult = [];
+            var handlerArgDefs = [];
+
+            if ( checkTaskParameter(Context.follow(Context.typeof(unpack(functionResult, e.pos))), e.pos) ) {
+              var name = "__parameter_" + seed++;
+              handlerArgResult.push(
+                {
+                  pos: pos,
+                  expr: EConst(CIdent(name))
+                });
+              handlerArgDefs.push(
+                {
+                  opt: false,
+                  name: name,
+                  type: null,
+                  value: null
+                });
+            }
+            var call = originParams == null 
+              ? unpack(functionResult, pos) 
+              : { pos:pos, expr:ECall(unpack(functionResult, pos), transformedParameters) };
+            var result = {
+              pos: pos,
+              expr: EFunction(null,
+              {
+                ret: null,
+                params: [],
+                expr: rest(handlerArgResult),
+                args: handlerArgDefs
+              })
+            };
+            return handlerArgDefs.length != 0 
+              ? macro $call.then(__task, $result)
+              : macro $call.then0(__task, $result);
+          } else {
+            var handlerArgResult = [];
+            var handlerArgDefs = [];
+            switch (Context.follow(Context.typeof(unpack(functionResult, e.pos))))
+            {
+              case TFun(args, _):
+              {
+                switch (args[args.length - 1].t)
+                {
+                  case TFun(args, _):
+                  {
+                    for (handlerArg in args)
+                    {
+                      var name = "__parameter_" + seed++;
+                      handlerArgResult.push(
+                        {
+                          pos: pos,
+                          expr: EConst(CIdent(name))
+                        });
+                      handlerArgDefs.push(
+                        {
+                          opt: handlerArg.opt,
+                          name: name,
+                          type: null,
+                          value: null
+                        });
+                    }
+                  }
+                  default:
+                  {
+                    var name = "__parameter_" + seed++;
+                    handlerArgResult.push(
+                      {
+                        pos: pos,
+                        expr: EConst(CIdent(name))
+                      });
+                    handlerArgDefs.push(
+                      {
+                        opt: true,
+                        name: name,
+                        type: null,
+                        value: null
+                      });
+                  }
+                }
+              }
+              default:
+              {
+                Context.error("First parameter of async() must be a function.", e.pos);
+              }
+            }
+
+            transformedParameters.push(
+            {
+              pos: pos,
+              expr: EFunction(null,
+              {
+                ret: null,
+                params: [],
+                expr: rest(handlerArgResult),
+                args: handlerArgDefs
+              })
+            });
+            return
+            {
+              pos: pos,
+              expr: ECall(
+                unpack(functionResult, pos),
+                transformedParameters),
+            };
+          }
+        });
+      }
+      else
+      {
+        return transform(
+          originParams[i],
+          asTask,
+          function(parameterResult:Array<Expr>):Expr
+          {
+            for (e in parameterResult)
+            {
+              transformedParameters.push(e);
+            }
+            return transformNext(i + 1, transformedParameters);
+          });
+      }
+    }
+    return transformNext(0, []);
   }
   
   static var nextDelayedId = 0;
