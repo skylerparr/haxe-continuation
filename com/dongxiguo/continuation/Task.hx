@@ -1,4 +1,5 @@
 package com.dongxiguo.continuation;
+using Lambda;
 
 enum TaskStatus<T> {
   Running;
@@ -11,10 +12,17 @@ class TaskInterruption {
   public function new() {}
 }
 
-class Task<T>
+// Csharp generator has bugs if you try to inherit from a generic Task class. In C#, Task is not generic.
+#if cs
+typedef Task<T> = _Task;
+typedef TaskType = Dynamic;
+class _Task
+#else
+class Task<TaskType>
+#end
 {
-  public var status(default, null) : TaskStatus<T>;
-  public var result(get_result, never) : T;
+  public var status(default, null) : TaskStatus<TaskType>;
+  public var result(get_result, never) : TaskType;
   public var running(get_running, never) : Bool;
   public var completion:Void->Void;
 
@@ -49,7 +57,7 @@ class Task<T>
     return cast this;
   }
 
-  public function run(op:(T->Void)->Void) : Task<T> {
+  public function run(op:(TaskType->Void)->Void) : Task<TaskType> {
     status = Running;
     try {
       op(function(result) {
@@ -70,7 +78,7 @@ class Task<T>
     }
   }
 
-  public function then(parent:Task<Dynamic>, next:T->Void) : Void {
+  public function then(parent:Task<Dynamic>, next:TaskType->Void) : Void {
     switch ( this.status ) {
     case Returned(_), Stalled(_), Running:
       parent.status = Stalled(this);
@@ -140,7 +148,7 @@ class Task<T>
     throw new TaskInterruption();
   }
 
-  inline function get_result() : T {
+  inline function get_result() : TaskType {
     switch ( status ) {
     case Returned(v): return v;
     case Exception(e): throw e; null;
@@ -170,19 +178,39 @@ class Task<T>
   }
 }
 
-/*
-function z(a:Int, b:Int) : Task<Int> {
-  var __task = new Task();
-  return __task.run(function(__return:Int->Void) : Void {
-    foo().then(__task, function(x) {
-      bar(x).then(__task, function(y) {
-        Task.wrapCPS(zed.bind(x, y)).then(__task, function(z) {
-           
-        });
-        trace(x);
-        __return(1);
-      });
-    });
+// A task that waits for all input tasks to complete
+class TaskUnion extends Task<Void>
+{
+  var children : Map<Task<Dynamic>, Int>;
+  public function new(tasks:Array<Task<Dynamic>>) {
+    super();
+    this.status = Running;
+    this.children = null;
+    for ( task in tasks ) {
+      switch ( task.status ) {
+      case Running, Stalled(_): 
+        if ( this.children == null ) this.children = new Map();
+        this.children.set(task, 0);
+        task.onCompletion(childCompleted.bind(task));
+      default:
+      }
+    }
+    if ( this.children == null ) {
+      this.status = Returned(null);
+    }
+  }
+
+  override function interruption() : Void {
+    for ( task in this.children.keys() ) {
+      task.interrupt();
+    }
+  }
+
+  function childCompleted(task:Task<Dynamic>) : Void {
+    this.children.remove(task); 
+    if ( this.children.empty() ) {
+      this.status = Returned(null);
+      callCompletion();
+    }
   }
 }
-*/
