@@ -1,11 +1,11 @@
 // Copyright (c) 2012, 杨博 (Yang Bo)
 // All rights reserved.
-// 
+//
 // Author: 杨博 (Yang Bo) <pop.atry@gmail.com>
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
-// 
+//
 // * Redistributions of source code must retain the above copyright notice,
 //   this list of conditions and the following disclaimer.
 // * Redistributions in binary form must reproduce the above copyright notice,
@@ -14,7 +14,7 @@
 // * Neither the name of the <ORGANIZATION> nor the names of its contributors
 //   may be used to endorse or promote products derived from this software
 //   without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 // AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 // IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -40,7 +40,7 @@ using Lambda;
   @author 杨博 <pop.atry@gmail.com>
 **/
 @:final
-class Continuation 
+class Continuation
 {
   /**
     Wrap a function to CPS function.
@@ -288,7 +288,7 @@ class ContinuationDetail
 {
   #if macro
   static var seed:Int = 0;
-  
+
   static function unpack(exprs: Array<Expr>, pos: Position):Expr
   {
     if (exprs.length != 1)
@@ -365,7 +365,7 @@ class ContinuationDetail
     default: Context.error("value is not a Task", pos); return false;
     }
   }
-    
+
   static function transformNoDelay(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr):Expr
   {
     switch (origin.expr)
@@ -554,7 +554,7 @@ class ContinuationDetail
       case ETry(e, catches):
       {
         var endTryName = "__endTry_" + seed++;
-        var endTryIdent = 
+        var endTryIdent =
         {
           pos: origin.pos,
           expr: EConst(CIdent(endTryName))
@@ -562,7 +562,7 @@ class ContinuationDetail
         var isVoidTry = switch (Context.follow(Context.typeof(e)))
         {
           #if (haxe_211 || haxe3)
-          case TAbstract(t, []):
+          case TAbstract(t, _):
           #else
           case TInst(t, params):
           if (params.length != 0) { false; } else
@@ -588,7 +588,7 @@ class ContinuationDetail
               ret: null,
               params: [],
               expr: rest(isVoidTry ? [] : [ tryResultIdent ]),
-              args: isVoidTry ? [] : 
+              args: isVoidTry ? [] :
               [
                 {
                   name: tryResultName,
@@ -600,7 +600,7 @@ class ContinuationDetail
             })
         }
         var tryBody = isVoidTry ? (macro { $e; __noException = true; }) : (macro { $tryResultIdent = $e; __noException = true; });
-        var transformedTry = 
+        var transformedTry =
         {
           pos: origin.pos,
           expr: ETry(tryBody, catches.map(
@@ -758,7 +758,7 @@ class ContinuationDetail
                                 expr: EConst(CIdent("__return")),
                                 pos: origin.pos
                               });
-                              return 
+                              return
                               {
                                 pos: origin.pos,
                                 expr: ECall(
@@ -1034,7 +1034,7 @@ class ContinuationDetail
                   }
                   default:
                   {
-                    if ( asTask ) 
+                    if ( asTask )
                     {
                       // allow taskVariable.async()
                       switch ( Context.follow(Context.typeof(prefixCall)) )
@@ -1224,8 +1224,8 @@ class ContinuationDetail
                   value: null
                 });
             }
-            var call = originParams == null 
-              ? unpack(functionResult, pos) 
+            var call = originParams == null
+              ? unpack(functionResult, pos)
               : { pos:pos, expr:ECall(unpack(functionResult, pos), transformedParameters) };
             var result = {
               pos: pos,
@@ -1237,7 +1237,7 @@ class ContinuationDetail
                 args: handlerArgDefs
               })
             };
-            return handlerArgDefs.length != 0 
+            return handlerArgDefs.length != 0
               ? macro $call.then(__task, $result)
               : macro $call.then0(__task, $result);
           } else {
@@ -1330,9 +1330,9 @@ class ContinuationDetail
     }
     return transformNext(0, []);
   }
-  
+
   static var nextDelayedId = 0;
-  
+
   @:isVar
   static var delayFunctions(get_delayFunctions, set_delayFunctions):Array<Void->Expr>;
 
@@ -1357,7 +1357,7 @@ class ContinuationDetail
       return delayFunctions;
     }
   }
-  
+
   static function delay(pos:Position, delayedFunction:Void->Expr):Expr
   {
     var id = delayFunctions.length;
@@ -1369,9 +1369,9 @@ class ContinuationDetail
       expr: ECall(macro com.dongxiguo.continuation.Continuation.ContinuationDetail.runDelayedFunction, [idExpr]),
     }
   }
-  
+
   #end
-  
+
   #if haxe3
   @:noUsing macro public static function runDelayedFunction(id:Int):Expr
   #else
@@ -1382,4 +1382,3 @@ class ContinuationDetail
   }
 
 }
-
