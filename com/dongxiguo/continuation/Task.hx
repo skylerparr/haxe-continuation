@@ -12,14 +12,7 @@ class TaskInterruption {
   public function new() {}
 }
 
-// Csharp generator has bugs if you try to inherit from a generic Task class. In C#, Task is not generic.
-#if cs
-typedef Task<T> = _Task;
-typedef TaskType = Dynamic;
-class _Task
-#else
 class Task<TaskType>
-#end
 {
   public var status(default, null) : TaskStatus<TaskType>;
   public var result(get_result, never) : TaskType;

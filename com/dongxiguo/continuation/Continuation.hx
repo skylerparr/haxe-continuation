@@ -343,25 +343,18 @@ class ContinuationDetail
       }
     case TInst(classType, typeParams):
       var classType = classType.get();
-      if ( Context.defined("cs") ) {
-        if ( classType.name != "_Task" || classType.pack.join(".") != "com.dongxiguo.continuation" ) {
-          Context.error("value is not a Task", pos);
-        }
-        return true;
-      } else {
-        if ( classType.name != "Task" || classType.pack.join(".") != "com.dongxiguo.continuation" ) {
-          Context.error("value is not a Task", pos);
-        }
-
-        var needParam = true;
-        if ( typeParams.length != 0 ) {
-          switch ( typeParams[0] ) {
-          case TAbstract(t,_): if ( t.get().name == "Void" ) needParam = false;
-          default:
-          }
-        }
-        return needParam;
+      if ( classType.name != "Task" || classType.pack.join(".") != "com.dongxiguo.continuation" ) {
+        Context.error("value is not a Task", pos);
       }
+
+      var needParam = true;
+      if ( typeParams.length != 0 ) {
+        switch ( typeParams[0] ) {
+        case TAbstract(t,_): if ( t.get().name == "Void" ) needParam = false;
+        default:
+        }
+      }
+      return needParam;
     default: Context.error("value is not a Task", pos); return false;
     }
   }
@@ -1042,8 +1035,7 @@ class ContinuationDetail
                         case TInst(classType, _):
                         {
                           var classType = classType.get();
-                          if ( (Context.defined("cs") && classType.name == "_Task" && classType.pack.join(".") == "com.dongxiguo.continuation") ||
-                              (!Context.defined("cs") && classType.name == "Task" && classType.pack.join(".") == "com.dongxiguo.continuation") )
+                          if ( classType.name == "Task" && classType.pack.join(".") == "com.dongxiguo.continuation" )
                           {
                             return transformAsync(prefixCall, origin.pos, asTask, null, rest);
                           }
