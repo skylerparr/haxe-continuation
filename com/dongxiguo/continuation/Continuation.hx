@@ -371,6 +371,10 @@ class ContinuationDetail
       #end
       case EWhile(econd, e, normalWhile):
       {
+        if ( !hasAsync(econd) && !hasAsync(e) ) {
+          return rest([origin]);
+        }
+
         var continueName = "__continue_" + seed++;
         var continueIdent =
         {
@@ -691,6 +695,11 @@ class ContinuationDetail
       }
       case ESwitch(e, cases, edef):
       {
+        var casesAsync = cases.exists(function(c) return hasAsync(c.expr) || (c.guard != null && hasAsync(c.guard)));
+        if ( !hasAsync(e) && !casesAsync ) {
+          return rest([origin]);
+        }
+
         return transform(e, asTask, function(eResult) : Expr
         {
           var transformedCases = cases.map(function(c)
@@ -896,6 +905,10 @@ class ContinuationDetail
       }
       case EFor(it, expr):
       {
+        if ( !hasAsync(it) && !hasAsync(expr) ) {
+          return rest([origin]);
+        }
+
         switch (it.expr)
         {
           case EIn(e1, e2):
@@ -1101,7 +1114,8 @@ class ContinuationDetail
         if (exprs.length == 0)
         {
           return rest([]);
-        }
+        } 
+
         function transformNext(i:Int):Expr
         {
           if (i == exprs.length - 1)
@@ -1199,6 +1213,82 @@ class ContinuationDetail
       }
     }
   }
+
+  static function hasAsync( expr : Expr ) : Bool {
+    switch ( expr.expr ) {
+    case ECall(e, params):
+      if (params.length == 0)
+      {
+        switch (e.expr)
+        {
+          case EField(_, field):
+            if (field == "async")
+              return true;
+          default:
+        }
+      }
+      return params.exists(hasAsync);
+    case EReturn(e):
+      return true;
+    case EConst(_):
+      return false;
+    case EField(e, field):
+      return hasAsync(e);
+    case EWhile(econd, e, normalWhile):
+      return hasAsync(econd) || hasAsync(e);
+    case EVars(vars):
+      return vars.exists(function(v) return v.expr != null && hasAsync(v.expr));
+    case EUntyped(e):
+      return hasAsync(e);
+    case EUnop(op, postFix, e):
+      return hasAsync(e);
+    case ETry(e, catches):
+      return hasAsync(e) || catches.exists(function(c) return hasAsync(c.expr));
+    case EMeta(s, e):
+      return hasAsync(e);
+    case ECheckType(e, t):
+      return hasAsync(e);
+    case EThrow(e):
+      return hasAsync(e);
+    case ETernary(econd, eif, eelse):
+      return hasAsync(econd) || hasAsync(eif) || hasAsync(eelse);
+    case ESwitch(e, cases, edef):
+      return hasAsync(e) || cases.exists(function(c) return hasAsync(c.expr) || (c.guard != null && hasAsync(c.guard)));
+    case EParenthesis(e):
+      return hasAsync(e);
+    case EObjectDecl(fields):
+      return fields.exists(function(f) return hasAsync(f.expr));
+    case ENew(typePath, params):
+      return params.exists(hasAsync);
+    case EIn(e1, e2):
+      return hasAsync(e1) || hasAsync(e2);
+    case EIf(econd, eif, eelse):
+      return hasAsync(econd) || hasAsync(eif) || (eelse != null && hasAsync(eelse));
+    case EFunction(name, f):
+      return false;
+    case EFor(it, e):
+      return hasAsync(it) || hasAsync(e);
+    case EDisplayNew(t):
+      return false;
+    case EDisplay(e, isCall):
+      return hasAsync(e);
+    case EContinue:
+      return false;
+    case ECast(e, t):
+      return hasAsync(e);
+    case EBreak:
+      return false;
+    case EBlock(exprs):
+      return exprs.exists(hasAsync);
+    case EBinop(op, e1, e2):
+      return hasAsync(e1) || hasAsync(e2);
+    case EArrayDecl(values):
+      return values.exists(hasAsync);
+    case EArray(e1, e2):
+      return hasAsync(e1) || hasAsync(e2);
+    }
+  }
+
 
   static function transformAsync(e:Expr, pos:Position, asTask:Bool, originParams:Array<Expr>, rest:Array<Expr>->Expr) : Expr {
     function transformNext(i:Int, transformedParameters:Array<Expr>):Expr
