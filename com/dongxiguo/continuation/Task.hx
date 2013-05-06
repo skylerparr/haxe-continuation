@@ -185,6 +185,10 @@ class TaskUnion extends Task<Void>
         if ( this.children == null ) this.children = new Map();
         this.children.set(task, 0);
         task.onCompletion(childCompleted.bind(task));
+      case Exception(e):
+        this.status = Exception(e);
+        callCompletion();
+        return;
       default:
       }
     }
@@ -194,16 +198,28 @@ class TaskUnion extends Task<Void>
   }
 
   override function interruption() : Void {
-    for ( task in this.children.keys() ) {
-      task.interrupt();
+    if ( this.running ) {
+      for ( task in this.children.keys() ) {
+        task.interrupt();
+      }
     }
   }
 
   function childCompleted(task:Task<Dynamic>) : Void {
-    this.children.remove(task); 
-    if ( this.children.empty() ) {
-      this.status = Returned(null);
-      callCompletion();
+    if ( this.running ) {
+      this.children.remove(task); 
+      switch ( task.status ) {
+      case Exception(e):
+        this.status = Exception(e);
+        callCompletion();
+        return;
+      default:
+      }
+
+      if ( this.children.empty() ) {
+        this.status = Returned(null);
+        callCompletion();
+      }
     }
   }
 }

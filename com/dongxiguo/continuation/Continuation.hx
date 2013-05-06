@@ -322,13 +322,13 @@ class ContinuationDetail
       });
   }
 
-  public static function transform(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr):Expr
+  static function transformDelayed(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr):Expr
   {
     return delay(
       origin.pos,
       function()
       {
-        return transformNoDelay(origin, asTask, rest);
+        return transform(origin, asTask, rest, true);
       });
   }
 
@@ -359,7 +359,7 @@ class ContinuationDetail
     }
   }
 
-  static function transformNoDelay(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr):Expr
+  public static function transform(origin:Expr, asTask:Bool, rest:Array<Expr>->Expr, delayed:Bool=false):Expr
   {
     switch (origin.expr)
     {
@@ -546,6 +546,10 @@ class ContinuationDetail
       #end
       case ETry(e, catches):
       {
+        if ( !delayed ) {
+          return transformDelayed(origin, asTask, rest);
+        }
+
         var endTryName = "__endTry_" + seed++;
         var endTryIdent =
         {
@@ -1023,6 +1027,9 @@ class ContinuationDetail
                 {
                   case ECall(e, originParams):
                   {
+                    if ( !delayed ) {
+                      return transformDelayed(origin, asTask, rest);
+                    }
                     return transformAsync(e, origin.pos, asTask, originParams, rest);
                   }
                   default:
@@ -1030,6 +1037,9 @@ class ContinuationDetail
                     if ( asTask )
                     {
                       // allow taskVariable.async()
+                      if ( !delayed ) {
+                        return transformDelayed(origin, asTask, rest);
+                      }
                       switch ( Context.follow(Context.typeof(prefixCall)) )
                       {
                         case TInst(classType, _):
@@ -1096,11 +1106,11 @@ class ContinuationDetail
         {
           if (i == exprs.length - 1)
           {
-            return transform(exprs[i], asTask, rest);
+            return transformDelayed(exprs[i], asTask, rest);
           }
           else
           {
-            return transform(exprs[i], asTask, function(transformedLine)
+            return transformDelayed(exprs[i], asTask, function(transformedLine)
             {
               transformedLine.push(transformNext(i + 1));
               return
