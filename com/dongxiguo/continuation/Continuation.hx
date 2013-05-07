@@ -1339,7 +1339,7 @@ class ContinuationDetail
             {
               case TFun(args, _):
               {
-                switch (args[args.length - 1].t)
+                switch (Context.follow(args[args.length - 1].t))
                 {
                   case TFun(args, _):
                   {
