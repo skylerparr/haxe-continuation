@@ -713,7 +713,7 @@ class ContinuationDetail
               return { expr: transform(c.expr, asTask, rest), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
             }
           }).array();
-          var transformedDef = edef == null ? rest([]) : transform(edef, asTask, rest);
+          var transformedDef = edef == null || edef.expr == null ? rest([]) : transform(edef, asTask, rest);
           return
           {
             pos: origin.pos,
