@@ -706,19 +706,27 @@ class ContinuationDetail
           {
             if (c.expr == null)
             {
-              return { expr: rest([]), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
+              return { expr: rest([]), guard: c.guard, values: c.values };
             }
             else
             {
-              return { expr: transform(c.expr, asTask, rest), #if (haxe_211 || haxe3) guard: c.guard, #end values: c.values };
+              return { expr: transform(c.expr, asTask, rest), guard: c.guard, values: c.values };
             }
           }).array();
-          var transformedDef = edef == null || edef.expr == null ? rest([]) : transform(edef, asTask, rest);
+          var transformedDefault;
+          if ( edef == null ) {
+            transformedDefault = null;
+          } else if ( edef.expr == null ) {
+            transformedDefault = edef;
+          } else {
+            transformedDefault = transform(edef, asTask, rest);
+          }
+
           return
           {
             pos: origin.pos,
-            expr: ESwitch(unpack(eResult, e.pos), transformedCases, transformedDef),
-          }
+            expr: ESwitch(unpack(eResult, e.pos), transformedCases, transformedDefault),
+          };
         });
       }
       case EReturn(returnExpr):
@@ -1116,6 +1124,10 @@ class ContinuationDetail
           return rest([]);
         } 
 
+        if ( !exprs.exists(function(e) return hasAsync(e)) ) {
+          return rest([origin]);
+        }
+
         function transformNext(i:Int):Expr
         {
           if (i == exprs.length - 1)
@@ -1124,15 +1136,17 @@ class ContinuationDetail
           }
           else
           {
-            return transformDelayed(exprs[i], asTask, function(transformedLine)
-            {
-              transformedLine.push(transformNext(i + 1));
-              return
+            return transformDelayed(exprs[i], asTask, 
+              function(transformedLine:Array<Expr>)
               {
-                pos: origin.pos,
-                expr: EBlock(transformedLine),
+                transformedLine.push(transformNext(i + 1));
+                return
+                {
+                  pos: origin.pos,
+                  expr: EBlock(transformedLine),
+                }
               }
-            });
+            );
           }
         }
         return transformNext(0);
@@ -1277,7 +1291,7 @@ class ContinuationDetail
     case ECast(e, t):
       return hasAsync(e);
     case EBreak:
-      return false;
+      return true;
     case EBlock(exprs):
       return exprs.exists(hasAsync);
     case EBinop(op, e1, e2):

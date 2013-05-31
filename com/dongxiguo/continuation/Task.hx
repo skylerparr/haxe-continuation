@@ -158,6 +158,7 @@ class Task<TaskType>
 
   inline function handleException(e:Dynamic) : Void {
     this.status = Exception(e);
+    throw e;
     callCompletion();
   }
 
