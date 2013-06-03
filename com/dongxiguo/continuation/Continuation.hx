@@ -1347,17 +1347,36 @@ class ContinuationDetail
               ? macro $call.then(__task, $result)
               : macro $call.then0(__task, $result);
           } else {
-            var handlerArgResult = [];
-            var handlerArgDefs = [];
-            switch (Context.follow(Context.typeof(unpack(functionResult, e.pos))))
-            {
-              case TFun(args, _):
+            // Insert a delay here in order to avoid deep stack recursion due to the Context.follow
+            return delay(e.pos, function() { 
+              var handlerArgResult = [];
+              var handlerArgDefs = [];
+              switch (Context.follow(Context.typeof(unpack(functionResult, e.pos))))
               {
-                switch (Context.follow(args[args.length - 1].t))
+                case TFun(args, _):
                 {
-                  case TFun(args, _):
+                  switch (Context.follow(args[args.length - 1].t))
                   {
-                    for (handlerArg in args)
+                    case TFun(args, _):
+                    {
+                      for (handlerArg in args)
+                      {
+                        var name = "__parameter_" + seed++;
+                        handlerArgResult.push(
+                          {
+                            pos: pos,
+                            expr: EConst(CIdent(name))
+                          });
+                        handlerArgDefs.push(
+                          {
+                            opt: handlerArg.opt,
+                            name: name,
+                            type: null,
+                            value: null
+                          });
+                      }
+                    }
+                    default:
                     {
                       var name = "__parameter_" + seed++;
                       handlerArgResult.push(
@@ -1367,55 +1386,39 @@ class ContinuationDetail
                         });
                       handlerArgDefs.push(
                         {
-                          opt: handlerArg.opt,
+                          opt: true,
                           name: name,
                           type: null,
                           value: null
                         });
                     }
                   }
-                  default:
-                  {
-                    var name = "__parameter_" + seed++;
-                    handlerArgResult.push(
-                      {
-                        pos: pos,
-                        expr: EConst(CIdent(name))
-                      });
-                    handlerArgDefs.push(
-                      {
-                        opt: true,
-                        name: name,
-                        type: null,
-                        value: null
-                      });
-                  }
+                }
+                default:
+                {
+                  Context.error("First parameter of async() must be a function.", e.pos);
                 }
               }
-              default:
-              {
-                Context.error("First parameter of async() must be a function.", e.pos);
-              }
-            }
 
-            transformedParameters.push(
-            {
-              pos: pos,
-              expr: EFunction(null,
+              transformedParameters.push(
               {
-                ret: null,
-                params: [],
-                expr: rest(handlerArgResult),
-                args: handlerArgDefs
-              })
+                pos: pos,
+                expr: EFunction(null,
+                {
+                  ret: null,
+                  params: [],
+                  expr: rest(handlerArgResult),
+                  args: handlerArgDefs
+                })
+              });
+              return
+              {
+                pos: pos,
+                expr: ECall(
+                  unpack(functionResult, pos),
+                  transformedParameters),
+              };
             });
-            return
-            {
-              pos: pos,
-              expr: ECall(
-                unpack(functionResult, pos),
-                transformedParameters),
-            };
           }
         });
       }
