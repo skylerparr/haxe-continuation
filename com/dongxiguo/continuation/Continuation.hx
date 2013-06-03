@@ -717,7 +717,7 @@ class ContinuationDetail
           if ( edef == null ) {
             transformedDefault = null;
           } else if ( edef.expr == null ) {
-            transformedDefault = edef;
+            transformedDefault = rest([]);
           } else {
             transformedDefault = transform(edef, asTask, rest);
           }
