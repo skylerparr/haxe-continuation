@@ -244,7 +244,7 @@ class ContinuationDetail
 
   public static function transform(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr
   {
-    if ( !hasAsync(inAsyncLoop, origin) ) {
+    if ( !requiresTransform(inAsyncLoop, origin) ) {
       return rest([origin]);
     }
 
@@ -258,6 +258,11 @@ class ContinuationDetail
       #end
       case EWhile(econd, e, normalWhile):
       {
+        // If there are no asynchronous calls in this loop, then we only need to replace return statements.
+        if ( !requiresTransform(inAsyncLoop, econd) && !hasAsyncCall(e) ) {
+          return rest([{expr:EWhile(econd, replaceFlowControl(e), normalWhile), pos:origin.pos}]);
+        }
+
         var continueName = "__continue_" + seed++;
         var continueIdent =
         {
@@ -280,6 +285,18 @@ class ContinuationDetail
               expr: EBlock(eResult.concat([ macro $continueIdent()]))
             };
           });
+        var doExpr = macro 
+        {
+          inline function __break()
+          {
+            $breakIdent();
+          }
+          inline function __continue()
+          {
+            $continueIdent();
+          }
+          $doBody;
+        };
         var continueBody = transform(
           econd, 0, inAsyncLoop,
           function(econdResult)
@@ -289,12 +306,12 @@ class ContinuationDetail
               pos: origin.pos,
               expr: EIf(
                 unpack(econdResult, econd.pos),
-                macro __do(),
+                doExpr,
                 macro $breakIdent())
             };
           });
         var breakBody = rest([]);
-        var startIdent = normalWhile ? macro $continueIdent : macro __do;
+        var start = normalWhile ? macro $continueIdent() : doBody;
         return macro
         {
           function $breakName():Void
@@ -302,23 +319,11 @@ class ContinuationDetail
             $breakBody;
           }
           var $continueName = null;
-          inline function __do()
-          {
-            inline function __break()
-            {
-              $breakIdent();
-            }
-            inline function __continue()
-            {
-              $continueIdent();
-            }
-            $doBody;
-          }
           $continueIdent = function():Void
           {
             $continueBody;
           }
-          $startIdent();
+          $start;
         };
       }
       case EVars(originVars):
@@ -766,6 +771,11 @@ class ContinuationDetail
       }
       case EFor(it, expr):
       {
+        // If there are no asynchronous calls in this loop, then we only need to replace return statements.
+        if ( !hasAsyncCall(expr) ) {
+          return rest([{expr:EFor(it, replaceFlowControl(expr)), pos:origin.pos}]);
+        }
+
         switch (it.expr)
         {
           case EIn(e1, e2):
@@ -873,6 +883,10 @@ class ContinuationDetail
               ]);
           });
       }
+      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(e, originParams), pos:_}]):
+      {
+        return transformAsync(e, maxOutputs, inAsyncLoop, origin.pos, originParams, rest);
+      }
       case ECall({expr:EField({expr:ECall(e, originParams), pos:_}, "async"), pos:_}, asyncCallParams) if (asyncCallParams.length == 0):
       {
         return transformAsync(e, maxOutputs, inAsyncLoop, origin.pos, originParams, rest);
@@ -893,7 +907,7 @@ class ContinuationDetail
         }
 
         // skip recursion if we don't need it.
-        if ( !originParams.exists(hasAsync.bind(inAsyncLoop)) ) {
+        if ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) ) {
           return finalTransform(originParams.copy());
         }
 
@@ -941,7 +955,7 @@ class ContinuationDetail
                 // In order to avoid excessive recursion, we eat up all of the non-async lines.
                 var next = i+1;
                 while ( next < exprs.length-1 ) {
-                  if ( !hasAsync(inAsyncLoop, exprs[next]) ) {
+                  if ( !requiresTransform(inAsyncLoop, exprs[next]) ) {
                     transformedLine.push(exprs[next++]); 
                   } else {
                     break;
@@ -1039,12 +1053,67 @@ class ContinuationDetail
     }
   }
 
-  static function hasAsync( inAsyncLoop:Bool, expr : Expr ) : Bool {
+  static function replaceFlowControl( expr:Expr ) : Expr {
+    if ( expr == null ) return null;
+    function f(e:Expr) {
+      switch ( e.expr ) {
+      case EReturn(returnExpr):
+        if (returnExpr == null) {
+          return { pos: e.pos, expr:EBlock([
+            {
+              pos: e.pos,
+              expr: ECall({pos: e.pos, expr: EConst(CIdent("__return"))}, []),
+            },
+            {
+              pos: e.pos,
+              expr : EReturn(null)
+            }
+          ])};
+        } else {
+          return transform(
+            returnExpr,
+            1,
+            false,
+            function(eResult) {
+              return { pos: e.pos, expr:EBlock([
+                {
+                  pos: e.pos,
+                  expr: ECall({pos: e.pos, expr: EConst(CIdent("__return"))}, eResult)
+                },
+                {
+                  pos: e.pos,
+                  expr : EReturn(null)
+                }
+              ])};
+            }
+          );
+        }
+      case _: return haxe.macro.ExprTools.map(e, f);
+      }
+    }
+    return f(expr);
+  }
+
+  static function hasAsyncCall( expr : Expr ) : Bool {
     if ( expr == null ) return false;
     var found = false; 
-    var f;
-    f = function(e:Expr) {
+    function f(e:Expr) {
       switch ( e.expr ) {
+      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(e, originParams), pos:_}]): found = true;
+      case ECall({expr:EField({expr:ECall(_,_), pos:_},"async"), pos:_}, params) if (params.length == 0): found = true;
+      case _: haxe.macro.ExprTools.iter(e, f);
+      }
+    }
+    f(expr);
+    return found;
+  }
+
+  static function requiresTransform( inAsyncLoop:Bool, expr : Expr ) : Bool {
+    if ( expr == null ) return false;
+    var found = false; 
+    function f(e:Expr) {
+      switch ( e.expr ) {
+      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(e, originParams), pos:_}]): found = true;
       case ECall({expr:EField({expr:ECall(_,_), pos:_},"async"), pos:_}, params) if (params.length == 0): found = true;
       case EReturn(_): found = true;
       case EBreak, EContinue: if ( inAsyncLoop ) found = true;
@@ -1080,6 +1149,15 @@ class ContinuationDetail
         };
 
         if ( numArgs == 0 ) {
+          // See if we're calling our super class
+          // This avoids Haxe complaining about creating a closure on super
+          var exprToType = unpack(functionResult, pos);
+          switch ( exprToType.expr ) {
+          case EField({expr:EConst(CIdent("super")), pos:_}, fnName):
+            exprToType = macro this.$fnName;
+          case _:
+          }
+
           // Number of outputs wasn't specified, need to inspect the caller.
           // We have to delay here, because the type of the expression may not be valid until the code generation 
           // has unrolled.
@@ -1087,7 +1165,7 @@ class ContinuationDetail
           // invocation of cps macros.
           var solved = null;
           return delay(e.pos, function() {
-            var type = Context.follow(Context.typeof(unpack(functionResult, pos)));
+            var type = Context.follow(Context.typeof(exprToType));
             // protect reentrancy
             if ( solved != null ) {
               return solved;
@@ -1150,7 +1228,7 @@ class ContinuationDetail
       });
     }
 
-    if ( !originParams.exists(hasAsync.bind(inAsyncLoop)) ) {
+    if ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) ) {
       return transformFinal(originParams.copy());
     }
 
