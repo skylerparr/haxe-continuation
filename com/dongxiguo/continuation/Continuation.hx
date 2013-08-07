@@ -339,8 +339,7 @@ class ContinuationDetail
               expr: EVars(newVars),
             };
             var restExpr = rest([]);
-            var out = macro { $varExpr; $restExpr; }
-            return out;
+            return macro { $varExpr; $restExpr; }
           }
           else
           {
@@ -959,31 +958,6 @@ class ContinuationDetail
           }
         }
         return transformNext(0);
-
-        /*
-        function transformNext(i:Int):Expr
-        {
-          if (i == exprs.length - 1)
-          {
-            return transform(exprs[i], 0, inAsyncLoop, rest);
-          }
-          else
-          {
-            return transform(exprs[i], 0, inAsyncLoop,
-              function(transformedLine:Array<Expr>)
-              {
-                transformedLine.push(transformNext(i + 1));
-                return
-                {
-                  pos: origin.pos,
-                  expr: EBlock(transformedLine),
-                }
-              }
-            );
-          }
-        }
-        return transformNext(0);
-        */
       }
       case EBinop(op, e1, e2):
       {
@@ -1096,14 +1070,13 @@ class ContinuationDetail
               args: defs
             })
           });
-          var out = 
+          return
           {
             pos: pos,
             expr: ECall(
               unpack(functionResult, pos),
               transformedParameters),
           };
-          return out;
         };
 
         if ( numArgs == 0 ) {
