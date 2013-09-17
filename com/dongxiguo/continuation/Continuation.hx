@@ -250,12 +250,14 @@ class ContinuationDetail
 
     switch (origin.expr)
     {
-      #if (haxe_211 || haxe3)
+      case EMeta({name:"await", params:[], pos:_}, {expr:ECall(e, originParams), pos:_}):
+      {
+        return transformAsync(e, maxOutputs, inAsyncLoop, origin.pos, originParams, rest);
+      }
       case EMeta(_, _):
       {
         return rest([origin]);
       }
-      #end
       case EWhile(econd, e, normalWhile):
       {
         // If there are no asynchronous calls in this loop, then we only need to replace return statements.
@@ -1099,7 +1101,8 @@ class ContinuationDetail
     var found = false; 
     function f(e:Expr) {
       switch ( e.expr ) {
-      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(e, originParams), pos:_}]): found = true;
+      case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(_, _), pos:_}]): found = true;
       case ECall({expr:EField({expr:ECall(_,_), pos:_},"async"), pos:_}, params) if (params.length == 0): found = true;
       case _: haxe.macro.ExprTools.iter(e, f);
       }
@@ -1113,7 +1116,8 @@ class ContinuationDetail
     var found = false; 
     function f(e:Expr) {
       switch ( e.expr ) {
-      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(e, originParams), pos:_}]): found = true;
+      case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(_, _), pos:_}]): found = true;
       case ECall({expr:EField({expr:ECall(_,_), pos:_},"async"), pos:_}, params) if (params.length == 0): found = true;
       case EReturn(_): found = true;
       case EBreak, EContinue: if ( inAsyncLoop ) found = true;
