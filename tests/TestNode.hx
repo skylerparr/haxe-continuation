@@ -29,26 +29,24 @@
 
 package tests;
 import js.Node;
-import com.dongxiguo.continuation.Continuation;
-using Lambda;
+import com.dongxiguo.continuation.Async;
 /**
  * @author 杨博
  */
-@:build(com.dongxiguo.continuation.Continuation.cpsByMeta("cps"))
-class TestNode 
+class TestNode implements Async
 {
   /**
    * Writes <code>content</code> to <code>fd</code>.
    */
-  @cps static function writeAll(fd:Int, content:String):Null<NodeErr>
+  @async static function writeAll(fd:Int, content:String):Null<NodeErr>
   {
     var totalWritten = 0;
     while (totalWritten < content.length)
     {
       var err, written =
-        Node.fs.write(
+        @await Node.fs.write(
           fd, content,
-          totalWritten, content.length - totalWritten, null).async();
+          totalWritten, content.length - totalWritten, null);
       if (err != null)
       {
         return err;
@@ -61,51 +59,56 @@ class TestNode
   /**
    * Creates a directory named "TestNode", and concurrently put 5 files into it.
    */
-  @cps static function startTest():Void
+  @async static function startTest():Void
   {
-    var err = Node.fs.mkdir("TestNode").async();
+    var err = @await Node.fs.mkdir("TestNode");
     if (err != null)
     {
       trace("Node.fs.mkdir failed: " + err);
       return;
     }
     
-    // Lambda.iter() forks threads for each element.
-    // Fork 5 threads now!
-    var fileName = ["1.txt", "2.log", "3.txt", "4.ini", "5.conf"].iter().async();
-    
-    // Note that some asynchronous functions return more than one values!
-    // It's OK in CPS functions, just like Lua.
-    var err, fd = Node.fs.open("TestNode/" + fileName, "w+").async();
-    if (err != null)
+    var fileNames = ["1.txt", "2.log", "3.txt", "4.ini", "5.conf"];
+    // fork 5 threads - one for each file!
+    @fork(fileName in fileNames)
     {
-      trace("Node.fs.open failed: " + err);
-      return;
-    }
-    
-    // Invoke another CPS function.
-    var err = writeAll(fd, "Content of " + fileName).async();
-    if (err != null)
-    {
-      trace("Node.fs.write failed: " + err);
-      return;
-    }
-    
-    var err = Node.fs.close(fd).async();
-    if (err != null)
-    {
-      trace("Node.fs.close failed: " + err);
-      return;
+      // Note that some asynchronous functions return more than one values!
+      // It's OK in CPS functions, just like Lua.
+      var err, fd = @await Node.fs.open("TestNode/" + fileName, "w+");
+      if (err != null)
+      {
+        trace("Node.fs.open failed: " + err);
+      }
+      else
+      {
+        // Invoke another CPS function.
+        var err = @await writeAll(fd, "Content of " + fileName);
+        if (err != null)
+        {
+          trace("Node.fs.write failed: " + err);
+        }
+        else 
+        {
+          var err = @await Node.fs.close(fd);
+          if (err != null)
+          {
+            trace("Node.fs.close failed: " + err);
+          }
+        }
+      }
     }
   }
 
   public static function main():Void
   {
+    // Note that the actual signature of startTest is: 
+    // function(results:Void->Void) : Void
     startTest(
       function():Void
       {
         trace("Test is done!");
-      });
+      }
+    );
   }
   
 }

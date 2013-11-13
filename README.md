@@ -1,19 +1,40 @@
 haxe-continuation
 =================
 
-If a function's last parameter is a callback function, it is an
-*asynchronous function*. **haxe-continuation** enables you to write an
-asynchronous function like a synchronization function, and automatically
-transform the function in *continuation-passing style (CPS)*. That means
-you can write code looks like *multithreading* without platform
-multithreading support.
+This is a fork of haxe-continuation with an improved Haxe 3.0 syntax, and several new features.
+
+**haxe-continuation** works with asynchronous functions, written in *continuation-passing style (CPS)*. In CPS, 
+instead of a function returning a result, it takes a callback function as a parameter, which will be invoked when 
+the operation is complete. For example, an asynchronous function that loads a file might look like:
+
+    function loadFile(name:String, results:String->Void) : Void
+
+To use this function to load two files, one after the other, you might write something like this:
+
+  loadFile("one.txt", function(contentsOne) {
+    loadFile("two.txt", function(contentsTwo) {
+      trace("both files loaded!");
+    });
+  });
+
+CPS has recently been popularized by server frameworks like node.js. One of the downsides of CPS is that the number of
+anonymous callback functions can get very deep, making for very hard to read code. Additionally, doing things like
+asynchronously iterating over a list of objects is hard to write and error-prone. 
+
+**haxe-continuation** allows you to write the preceding code like so:
+
+  var contentsOne = @await loadFile("one.txt");
+  var contentsTwo = @await loadFile("two.txt");
+  trace("both files loaded!");
+
+The Haxe macro system is used to transform the code to CPS at compile time, making it easier for you to write asynchronous 
+code, while inflicting no additional runtime overhead. It is designed in particular for making it easier to write node.js code.
 
 ## Installation
 
-I have upload haxe-continuation to haxelib. To install, type the following
-command in shell:
+Type the following command in your shell:
 
-    haxelib install continuation
+    haxelib git continuation https://github.com/proletariatgames/haxe-continuation.git
 
 Now you can use continuation in your code:
 
@@ -27,82 +48,74 @@ Output to JavaScript:
 
 , or output to any other platform that Haxe supports.
 
-haxe-continuation requires Haxe 2.10.
+This fork of haxe-continuation requires Haxe 3.0.
 
 ## Usage
 
-You can use `Continuation.cpsFunction` to write a CPS asynchronous
-function. In `Continuation.cpsFunction`, `async` is a magic word to invoke other
-async functions. When calling an asynchronous function with the `.async()` postfix, you need not to explicitly pass a callback
-function. Instead, the code after `.async()` will be captured as the callback
-function used by the callee.
+You can create a class that supports asynchronous methods by implementing the Async interface. This interface has no
+methods to implement - it simply instructs the compiler to invoke the code transformation. To write an async function,
+add the @async metadata. An async function can then use @await to invoke another async function. Example:
 
-    import com.dongxiguo.continuation.Continuation;
+
+    import com.dongxiguo.continuation.Async;
+    class Sample implements Async
+    {
+      @async function concatFileContents(fileOne:String, fileTwo:String) : String {
+        var contentsOne = @await loadFile(fileOne);
+        var contentsTwo = @await loadFile(fileTwo);
+        return contentsOne + contentsTwo;
+      }
+    }
+
+This code is transformed at compile time to something like the following:
+
     class Sample
     {
-      // An asynchronous function without automatically CPS transformation.
-      static function sleepOneSecond(handler:Void->Void):Void
-      {
-        haxe.Timer.delay(handler, 1000);
-      }
-      public static function main() 
-      {
-        Continuation.cpsFunction(function asyncTest():Void
-        {
-          trace("Start continuation.");
-          for (i in 0...10)
-          {
-            // Invoke an asynchronous function.
-            sleepOneSecond().async();
-            trace("Run sleepOneSecond " + i + " times.");
-          }
-          trace("Continuation is done.");
-        });
-        asyncTest(function()
-        {
-          trace("Handler without continuation.");
+      function concatFileContents(fileOne:String, fileTwo:String, __result:String->Void) : Void {
+        loadFile(fileOne, function(contentsOne) {
+          loadFile(fileTwo, function(contentsTwo) {
+            __result(contentsOne + contentsTwo);
+          });
         });
       }
     }
 
-Another way to write a CPS function is putting `@:build(com.dongxiguo.continuation.Continuation.cpsByMeta(":cps"))`
-before a class, and marking the CPS functions in that class as `@:cps`:
+Another feature in **haxe-continuation** is *forking*. The analogy to multithreaded code is instead of processing a list of items
+serially (one after the other), you start a thread for each item, and wait for all threads to return. This can increase
+performance by issuing several blocking calls at once, and serving each one as soon as the results are available. 
 
-    import com.dongxiguo.continuation.Continuation;
-    @:build(com.dongxiguo.continuation.Continuation.cpsByMeta(":cps"))
-    class Sample2
+An example fork:
+
+    import com.dongxiguo.continuation.Async;
+    class Sample implements Async
     {
-      // An asynchronous function without automatically CPS transformation.
-      static function sleepOneSecond(handler:Void->Void):Void
-      {
-        haxe.Timer.delay(handler, 1000);
-      }
-      @:cps static function asyncTest():Void
-      {
-        trace("Start continuation.");
-        for (i in 0...10)
-        {
-          // Invoke an asynchronous function.
-          sleepOneSecond().async();
-          trace("Run sleepOneSecond " + i + " times.");
+      @async function concatFilesInAnyOrder(files:Array<String>) : String {
+        var output = "";
+        // start a separate "thread" for each element in the array
+        @fork(file in files) {
+          // the code block executed by each "thread"
+          output += @await loadFile(file);
         }
-        trace("Continuation is done.");
-      }
-      public static function main() 
-      {
-        asyncTest(function()
-        {
-          trace("Handler without continuation.");
-        });
+        // at this point, all threads have finished executing.
+        return output;
       }
     }
 
-See https://github.com/Atry/haxe-continuation/blob/master/tests/TestContinuation.hx
-for more examples.
+Note that in the preceding example, the loadFile callbacks may be executed in any order, so the returned contents
+might not be in the same order as the input array.
+
+Finally, some libraries such as node.js may return several outputs in their CPS functions, for example:
+
+  function loadFileWithError(file:String, result:ErrorCode->String->Void) : Void;
+
+In this case, the callback function returns both an error code and the file contents. You can get both results using
+@await like so:
+
+  var error, contents = @await loadFileWithError("file.txt");
 
 ### Working with [hx-node](https://github.com/cloudshift/hx-node)
 
-Look at https://github.com/Atry/haxe-continuation/blob/master/tests/TestNode.hx.
+Look at https://github.com/proletariatgames/haxe-continuation/blob/master/tests/TestNode.hx
 The example forks 5 threads, and calls Node.js's asynchronous functions in each thread.
 
 ## License
@@ -111,6 +124,7 @@ Copyright (c) 2012, 杨博 (Yang Bo)
 All rights reserved.
 
 Author: 杨博 (Yang Bo) <pop.atry@gmail.com>
+Contributor: Dan Ogles <dan@proletariat.com>
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -120,7 +134,7 @@ modification, are permitted provided that the following conditions are met:
 * Redistributions in binary form must reproduce the above copyright notice,
   this list of conditions and the following disclaimer in the documentation
   and/or other materials provided with the distribution.
-* Neither the name of the <ORGANIZATION> nor the names of its contributors
+* Neither the name of Proletariat, Inc. nor the names of its contributors
   may be used to endorse or promote products derived from this software
   without specific prior written permission.
 
