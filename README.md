@@ -11,11 +11,11 @@ the operation is complete. For example, an asynchronous function that loads a fi
 
 To use this function to load two files, one after the other, you might write something like this:
 
-  loadFile("one.txt", function(contentsOne) {
-    loadFile("two.txt", function(contentsTwo) {
-      trace("both files loaded!");
+    loadFile("one.txt", function(contentsOne) {
+      loadFile("two.txt", function(contentsTwo) {
+        trace("both files loaded!");
+      });
     });
-  });
 
 CPS has recently been popularized by server frameworks like node.js. One of the downsides of CPS is that the number of
 anonymous callback functions can get very deep, making for very hard to read code. Additionally, doing things like
@@ -23,9 +23,9 @@ asynchronously iterating over a list of objects is hard to write and error-prone
 
 **haxe-continuation** allows you to write the preceding code like so:
 
-  var contentsOne = @await loadFile("one.txt");
-  var contentsTwo = @await loadFile("two.txt");
-  trace("both files loaded!");
+    var contentsOne = @await loadFile("one.txt");
+    var contentsTwo = @await loadFile("two.txt");
+    trace("both files loaded!");
 
 The Haxe macro system is used to transform the code to CPS at compile time, making it easier for you to write asynchronous 
 code, while inflicting no additional runtime overhead. It is designed in particular for making it easier to write node.js code.
@@ -106,12 +106,12 @@ might not be in the same order as the input array.
 
 Finally, some libraries such as node.js may return several outputs in their CPS functions, for example:
 
-  function loadFileWithError(file:String, result:ErrorCode->String->Void) : Void;
+    function loadFileWithError(file:String, result:ErrorCode->String->Void) : Void;
 
 In this case, the callback function returns both an error code and the file contents. You can get both results using
 @await like so:
 
-  var error, contents = @await loadFileWithError("file.txt");
+    var error, contents = @await loadFileWithError("file.txt");
 
 ### Working with [hx-node](https://github.com/cloudshift/hx-node)
 
@@ -124,6 +124,7 @@ Copyright (c) 2012, 杨博 (Yang Bo)
 All rights reserved.
 
 Author: 杨博 (Yang Bo) <pop.atry@gmail.com>
+
 Contributor: Dan Ogles <dan@proletariat.com>
 
 Redistribution and use in source and binary forms, with or without
