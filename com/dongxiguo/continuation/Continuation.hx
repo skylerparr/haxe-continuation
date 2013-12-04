@@ -42,6 +42,24 @@ using Lambda;
 @:final
 class Continuation
 {
+  /** Helper for making a block of code that uses @await, when you don't care
+   *  about when block of code finishes. This is analogous to spawning a thread.
+   *
+   *  Example:
+   *
+   *  Continuation.doAsync({
+   *    @await fun1();
+   *    @await fun2();
+   *    trace("executed later");
+   *  });
+   *  trace("executed immediately");
+   */
+  macro public static function doAsync(expr:Expr):Expr {
+    return macro com.dongxiguo.continuation.Continuation.cpsFunction(function() {
+      $expr;
+    })(function(){});
+  }
+  
   /**
     Wrap a function to CPS function.
 
