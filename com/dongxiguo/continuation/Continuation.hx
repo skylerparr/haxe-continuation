@@ -183,23 +183,25 @@ class Continuation
                   name: "Void"
                 });
               var originExpr = f.expr;
-              f.expr = ContinuationDetail.transform(
-                originExpr,
-                0,
-                false,
-                function(transformed)
-                {
-                  transformed.push(
+              if ( originExpr != null ) {
+                f.expr = ContinuationDetail.transform(
+                  originExpr,
+                  0,
+                  false,
+                  function(transformed)
                   {
-                    expr: ECall(macro __return, []),
-                    pos: originExpr.pos,
+                    transformed.push(
+                    {
+                      expr: ECall(macro __return, []),
+                      pos: originExpr.pos,
+                    });
+                    return
+                    {
+                      pos: originExpr.pos,
+                      expr: EBlock(transformed),
+                    }
                   });
-                  return
-                  {
-                    pos: originExpr.pos,
-                    expr: EBlock(transformed),
-                  }
-                });
+              }
               break;
             }
           }
