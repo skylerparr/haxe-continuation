@@ -146,7 +146,12 @@ class Continuation
   @:noUsing @:macro public static function cpsByMeta(metaName:String):Array<Field>
   #end
   {
-    var bf = Context.getBuildFields();
+    return cpsByMetaFields(metaName, Context.getBuildFields());
+  }
+
+  #if macro
+  public static function cpsByMetaFields(metaName:String, bf:Array<Field>) : Array<Field> 
+  {
     for (field in bf)
     {
       switch (field.kind)
@@ -214,8 +219,7 @@ class Continuation
     }
     return bf;
   }
-
-
+  #end
 }
 
 /**
