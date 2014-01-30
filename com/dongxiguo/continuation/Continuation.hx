@@ -63,7 +63,7 @@ class Continuation
   /**
     Wrap a function to CPS function.
 
-    In wrapped function, you can use <code>.async()</code> postfix to invoke other asynchronous functions.
+    In wrapped function, you can use <code>@await</code> prefix to invoke other asynchronous functions.
    **/
   #if haxe3
   macro public static function cpsFunction(expr:Expr):Expr
@@ -138,7 +138,7 @@ class Continuation
   /**
     When you add <code>@:build(com.dongxiguo.continuation.Continuation.cpsByMeta("metaName"))</code> in front of a class, any method with same metadata name from <code>metaName</code> in that class will be transfromed to CPS function.
 
-    In these methods, you can use <code>.async()</code> postfix to invoke other asynchronous functions.
+    In these methods, you can use <code>@await</code> prefix to invoke other asynchronous functions.
   **/
   #if haxe3
   @:noUsing macro public static function cpsByMeta(metaName:String):Array<Field>
@@ -242,7 +242,7 @@ class ContinuationDetail
     return exprs[0];
   }
 
-  static function transformCondition(
+  static inline function transformCondition(
     pos:Position,
     inAsyncLoop:Bool,
     econd:Expr,
@@ -266,12 +266,24 @@ class ContinuationDetail
       });
   }
 
-  public static function transform(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr
+  static var stackProtect = 0;
+  static inline var MAX_STACK = 50;
+  public static inline function transform(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr
   {
-    if ( !requiresTransform(inAsyncLoop, origin) ) {
-      return rest([origin]);
+    ++stackProtect;
+    var out;
+    if ( stackProtect > MAX_STACK ) {
+      out = delay(origin.pos, function() return transform(origin, maxOutputs, inAsyncLoop, rest));
+    } else {
+      out = requiresTransform(inAsyncLoop, origin)
+        ? transform_(origin, maxOutputs, inAsyncLoop, rest)
+        : rest([origin]);
     }
+    --stackProtect;
+    return out;
+  }
 
+  static function transform_(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr {
     switch (origin.expr)
     {
       // @fork(identifier in iterable) { ... forked code ... }
@@ -294,7 +306,7 @@ class ContinuationDetail
       {
         // If there are no asynchronous calls in this loop, then we only need to replace return statements.
         if ( !requiresTransform(inAsyncLoop, econd) && !hasAsyncCall(e) ) {
-          return rest([{expr:EWhile(econd, replaceFlowControl(e), normalWhile), pos:origin.pos}]);
+          return rest([{expr:EWhile(econd, replaceFlowControl(e, false), normalWhile), pos:origin.pos}]);
         }
 
         var continueName = "__continue_" + seed++;
@@ -612,17 +624,15 @@ class ContinuationDetail
       {
         return transform(e, 1, inAsyncLoop, function(eResult) : Expr
         {
-          var transformedCases = cases.map(function(c)
-          {
-            if (c.expr == null)
-            {
-              return { expr: rest([]), guard: c.guard, values: c.values };
+          var transformedCases = [];
+          for ( c in cases ) {
+            if (c.expr == null) {
+              transformedCases.push({ expr: rest([]), guard: c.guard, values: c.values });
+            } else {
+              transformedCases.push({ expr: transform(c.expr, 0, inAsyncLoop, rest), guard: c.guard, values: c.values });
             }
-            else
-            {
-              return { expr: transform(c.expr, 0, inAsyncLoop, rest), guard: c.guard, values: c.values };
-            }
-          }).array();
+          }
+
           var transformedDefault;
           if ( edef == null ) {
             transformedDefault = null;
@@ -632,8 +642,7 @@ class ContinuationDetail
             transformedDefault = transform(edef, 0, inAsyncLoop, rest);
           }
 
-          return
-          {
+          return {
             pos: origin.pos,
             expr: ESwitch(unpack(eResult, e.pos), transformedCases, transformedDefault),
           };
@@ -656,7 +665,7 @@ class ContinuationDetail
         }
         switch (returnExpr.expr)
         {
-          case ECall({expr:EField({expr:ECall(e, originParams), pos:_}, "async"), pos:_}, asyncParams) if (asyncParams.length == 0):
+          case EMeta({name:"await", params:[], pos:_}, {expr:ECall(e, originParams), pos:_}):
             // Optimization: pass continuation 
             function transformNext(i:Int, transformedParameters:Array<Expr>):Expr
             {
@@ -807,7 +816,7 @@ class ContinuationDetail
       {
         // If there are no asynchronous calls in this loop, then we only need to replace return statements.
         if ( !hasAsyncCall(expr) ) {
-          return rest([{expr:EFor(it, replaceFlowControl(expr)), pos:origin.pos}]);
+          return rest([{expr:EFor(it, replaceFlowControl(expr, false)), pos:origin.pos}]);
         }
 
         switch (it.expr)
@@ -916,14 +925,6 @@ class ContinuationDetail
                 }
               ]);
           });
-      }
-      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(e, originParams), pos:_}]):
-      {
-        return transformAsync(e, maxOutputs, inAsyncLoop, origin.pos, originParams, rest);
-      }
-      case ECall({expr:EField({expr:ECall(e, originParams), pos:_}, "async"), pos:_}, asyncCallParams) if (asyncCallParams.length == 0):
-      {
-        return transformAsync(e, maxOutputs, inAsyncLoop, origin.pos, originParams, rest);
       }
       case ECall(e, originParams):
       {
@@ -1087,9 +1088,10 @@ class ContinuationDetail
     }
   }
 
-  static function replaceFlowControl( expr:Expr ) : Expr {
-    if ( expr == null ) return null;
+  static function replaceFlowControl( expr:Expr, inAsyncLoop:Bool ) : Expr {
     function f(e:Expr) {
+      if ( e == null ) return null;
+      if ( e.expr == null ) return e;
       switch ( e.expr ) {
       case EReturn(returnExpr):
         if (returnExpr == null) {
@@ -1122,6 +1124,9 @@ class ContinuationDetail
             }
           );
         }
+      case EContinue if (inAsyncLoop): return macro { __continue(); return; }
+      case EBreak if (inAsyncLoop): return macro { __break(); return; }
+      case EFunction(_,_): return e;
       case _: return haxe.macro.ExprTools.map(e, f);
       }
     }
@@ -1129,14 +1134,14 @@ class ContinuationDetail
   }
 
   static function hasAsyncCall( expr : Expr ) : Bool {
-    if ( expr == null ) return false;
     var found = false; 
     function f(e:Expr) {
-      switch ( e.expr ) {
-      case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
-      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(_, _), pos:_}]): found = true;
-      case ECall({expr:EField({expr:ECall(_,_), pos:_},"async"), pos:_}, params) if (params.length == 0): found = true;
-      case _: haxe.macro.ExprTools.iter(e, f);
+      if ( e != null && e.expr != null ) {
+        switch ( e.expr ) {
+        case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+        case EFunction(_,_):
+        case _: haxe.macro.ExprTools.iter(e, f);
+        }
       }
     }
     f(expr);
@@ -1146,22 +1151,22 @@ class ContinuationDetail
   static function requiresTransform( inAsyncLoop:Bool, expr : Expr ) : Bool {
     if ( expr == null ) return false;
     var found = false; 
-    function f(e:Expr) {
+    var stack = [expr];
+    while ( stack.length > 0 ) {
+      var e = stack.pop();
       switch ( e.expr ) {
       case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
-      case ECall({expr:EConst(CIdent("async")), pos:_}, [{expr:ECall(_, _), pos:_}]): found = true;
-      case ECall({expr:EField({expr:ECall(_,_), pos:_},"async"), pos:_}, params) if (params.length == 0): found = true;
       case EReturn(_): found = true;
       case EBreak, EContinue: if ( inAsyncLoop ) found = true;
-      case _: haxe.macro.ExprTools.iter(e, f);
+      case EFunction(_,_):
+      case _: haxe.macro.ExprTools.iter(e, stack.push);
       }
     }
-    f(expr);
     return found;
   }
 
-  static function transformAsync(e:Expr, numArgs:Int, inAsyncLoop:Bool, pos:Position, originParams:Array<Expr>, rest:Array<Expr>->Expr) : Expr {
-    function transformFinal(transformedParameters:Array<Expr>) {
+  static inline function transformAsync(e:Expr, numArgs:Int, inAsyncLoop:Bool, pos:Position, originParams:Array<Expr>, rest:Array<Expr>->Expr) : Expr {
+    inline function transformFinal(transformedParameters:Array<Expr>) {
       return transform(e, 0, inAsyncLoop, function(functionResult) {
         var completion = function(defs, results) {
           transformedParameters.push(
@@ -1231,14 +1236,14 @@ class ContinuationDetail
                 }
               case _: numArgs = 0;
               }
-            case _: Context.error("async() can only be used on a function call", e.pos);
+            case _: Context.error("@await can only be used on a function call", e.pos);
             }
             solved = completion(handlerArgDefs, handlerArgResult);
             return solved;
           });
         } else {
           // Assume the number of outputs is the number of vars we're assigning to.
-          // This is typically one, unless the syntax "var x, y = foo().async()" is used.
+          // This is typically one, unless the syntax "var x, y = @await foo()" is used.
           var handlerArgResult = [];
           var handlerArgDefs = [];
 
@@ -1264,10 +1269,6 @@ class ContinuationDetail
       });
     }
 
-    if ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) ) {
-      return transformFinal(originParams.copy());
-    }
-
     function transformNext(i:Int, transformedParameters:Array<Expr>):Expr
     {
       if (originParams == null || i == originParams.length)
@@ -1287,7 +1288,9 @@ class ContinuationDetail
           });
       }
     }
-    return transformNext(0, []);
+
+    return ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) ) 
+      ? transformFinal(originParams.copy()) : transformNext(0, []);
   }
 
   static var nextDelayedID = 0;
