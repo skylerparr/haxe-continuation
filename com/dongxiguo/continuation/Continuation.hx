@@ -289,9 +289,11 @@ class ContinuationDetail
       // @fork(identifier in iterable) { ... forked code ... }
       case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(ident)), pos:_}, it), pos:_}]}, forkExpr):
         var fork = macro {
-          var $ident, __join = @await com.dongxiguo.continuation.utils.ForkJoin.fork($it);
-          $forkExpr; 
-          @await __join();
+          if ( !Lambda.empty($it) ) {
+            var $ident, __join = @await com.dongxiguo.continuation.utils.ForkJoin.fork($it);
+            $forkExpr; 
+            @await __join();
+          }
         };
         return transform(fork, maxOutputs, inAsyncLoop, rest);
       case EMeta({name:"await", params:[], pos:_}, {expr:ECall(e, originParams), pos:_}):
