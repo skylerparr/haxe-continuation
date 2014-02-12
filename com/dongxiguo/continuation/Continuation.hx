@@ -267,7 +267,7 @@ class ContinuationDetail
   }
 
   static var stackProtect = 0;
-  static inline var MAX_STACK = 40;
+  static inline var MAX_STACK = 1000;
   public static inline function transform(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr
   {
     ++stackProtect;
