@@ -159,9 +159,15 @@ class Continuation
         case FFun(f):
         {
           var originReturnType = f.ret;
-          for (m in field.meta)
+          var originMeta = field.meta;
+          field.meta = [];
+          for (m in originMeta)
           {
-            if (m.name == metaName)
+            if (m.name != metaName)
+            {
+              field.meta.push(m);
+            }
+            else
             {
               f.args = f.args.concat(
                 [
