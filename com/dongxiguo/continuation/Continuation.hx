@@ -213,7 +213,6 @@ class Continuation
                     }
                   });
               }
-              break;
             }
           }
         }
