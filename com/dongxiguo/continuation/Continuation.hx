@@ -55,6 +55,9 @@ class Continuation
    *  trace("executed immediately");
    */
   macro public static function doAsync(expr:Expr):Expr {
+    if (!ContinuationDetail.hasAsyncCall(expr)) {
+      Context.warning('doAsync call, but no async operations performed', expr.pos);
+    }
     return macro com.dongxiguo.continuation.Continuation.cpsFunction(function() {
       $expr;
     })(function(){});
@@ -293,6 +296,9 @@ class ContinuationDetail
     {
       // @fork(identifier in iterable) { ... forked code ... }
       case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(ident)), pos:_}, it), pos:_}]}, forkExpr):
+        if ( !hasAsyncCall(forkExpr) ) {
+          Context.warning('@fork used, but no asynchronous calls are made in expression', origin.pos);
+        }
         var fork = macro {
           if ( !Lambda.empty($it) ) {
             var $ident, __join = @await com.dongxiguo.continuation.utils.ForkJoin.fork($it);
@@ -1140,12 +1146,13 @@ class ContinuationDetail
     return f(expr);
   }
 
-  static function hasAsyncCall( expr : Expr ) : Bool {
+  public static function hasAsyncCall( expr : Expr ) : Bool {
     var found = false; 
     function f(e:Expr) {
       if ( e != null && e.expr != null ) {
         switch ( e.expr ) {
         case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+        case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
         case EFunction(_,_):
         case _: haxe.macro.ExprTools.iter(e, f);
         }
@@ -1163,6 +1170,7 @@ class ContinuationDetail
       var e = stack.pop();
       switch ( e.expr ) {
       case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+      case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
       case EReturn(_): found = true;
       case EBreak, EContinue: if ( inAsyncLoop ) found = true;
       case EFunction(_,_):
