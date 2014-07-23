@@ -1,0 +1,13 @@
+{
+  "name": "continuation",
+  "license": "BSD",
+  "tags": ["cps","cross","utility","continuation","js","javascript","nme","cpp","flash","neko","php"],
+  "description": "Enable continuation in Haxe",
+  "contributors": ["Atry"],
+  "releasenote": "\n      Fix return expression without return value.\n    ",
+  "version": "0.2.2",
+  "url": "https://github.com/Atry/haxe-continuation",
+  "dependencies": {
+
+  }
+}
