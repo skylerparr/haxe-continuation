@@ -62,7 +62,7 @@ class Continuation
       $expr;
     })(function(){});
   }
-  
+
   /**
     Wrap a function to CPS function.
 
@@ -153,7 +153,7 @@ class Continuation
   }
 
   #if macro
-  public static function cpsByMetaFields(metaName:String, bf:Array<Field>) : Array<Field> 
+  public static function cpsByMetaFields(metaName:String, bf:Array<Field>) : Array<Field>
   {
     for (field in bf)
     {
@@ -252,6 +252,7 @@ class ContinuationDetail
 
   static inline function transformCondition(
     pos:Position,
+    maxOutputs:Int,
     inAsyncLoop:Bool,
     econd:Expr,
     eif:Expr,
@@ -259,7 +260,7 @@ class ContinuationDetail
   {
     return transform(
       econd,
-      0,
+      1,
       inAsyncLoop,
       function(econdResult)
       {
@@ -268,30 +269,17 @@ class ContinuationDetail
           pos: pos,
           expr: EIf(
             unpack(econdResult, econd.pos),
-            transform(eif, 0, inAsyncLoop, rest),
-            eelse == null ? rest([]) : transform(eelse, 0, inAsyncLoop, rest)),
+            transform(eif, maxOutputs, inAsyncLoop, rest),
+            eelse == null ? rest([]) : transform(eelse, maxOutputs, inAsyncLoop, rest)),
         };
       });
   }
 
-  static var stackProtect = 0;
-  static inline var MAX_STACK = 1000;
-  public static inline function transform(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr
-  {
-    ++stackProtect;
-    var out;
-    if ( stackProtect > MAX_STACK ) {
-      out = delay(origin.pos, function() return transform(origin, maxOutputs, inAsyncLoop, rest));
-    } else {
-      out = requiresTransform(inAsyncLoop, origin)
-        ? transform_(origin, maxOutputs, inAsyncLoop, rest)
-        : rest([origin]);
+  public static function transform(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr {
+    if (!requiresTransform(inAsyncLoop, origin)) {
+      return rest([origin]);
     }
-    --stackProtect;
-    return out;
-  }
 
-  static function transform_(origin:Expr, maxOutputs:Int, inAsyncLoop:Bool, rest:Array<Expr>->Expr) : Expr {
     switch (origin.expr)
     {
       // @fork(identifier in iterable) { ... forked code ... }
@@ -302,13 +290,24 @@ class ContinuationDetail
         var fork = macro {
           if ( !Lambda.empty($it) ) {
             var $ident, __join = @await com.dongxiguo.continuation.utils.ForkJoin.fork($it);
-            $forkExpr; 
+            $forkExpr;
             @await __join();
           }
         };
         return transform(fork, maxOutputs, inAsyncLoop, rest);
-      case EMeta({name:"await", params:[], pos:_}, {expr:ECall(e, originParams), pos:_}):
+      case EMeta({name:"await", params:params, pos:_}, {expr:ECall(e, originParams), pos:_}):
       {
+        if (params.length > 0) {
+          if (params.length != 1) {
+            Context.error('@await expects one parameter', origin.pos);
+          } else {
+            switch (params[0].expr) {
+            case EConst(CInt(i)): maxOutputs = Std.parseInt(i);
+            default:
+              Context.error('@await parameter must be an integer constant', params[0].pos);
+            }
+          }
+        }
         return transformAsync(e, maxOutputs, inAsyncLoop, origin.pos, originParams, rest);
       }
       case EMeta(_, _):
@@ -344,7 +343,7 @@ class ContinuationDetail
               expr: EBlock(eResult.concat([ macro $continueIdent()]))
             };
           });
-        var doExpr = macro 
+        var doExpr = macro
         {
           inline function __break()
           {
@@ -447,7 +446,7 @@ class ContinuationDetail
       case EUntyped(e):
       {
         return transform(
-          e, 0, inAsyncLoop,
+          e, maxOutputs, inAsyncLoop,
           function(eResult)
           {
             return rest(
@@ -478,7 +477,7 @@ class ContinuationDetail
       case EType(e, field):
       {
         return transform(
-          e, 0, inAsyncLoop,
+          e, 1, inAsyncLoop,
           function(eResult)
           {
             return rest(
@@ -631,7 +630,7 @@ class ContinuationDetail
       }
       case ETernary(econd, eif, eelse):
       {
-        return transformCondition(origin.pos, inAsyncLoop, econd, eif, eelse, rest);
+        return transformCondition(origin.pos, maxOutputs, inAsyncLoop, econd, eif, eelse, rest);
       }
       case ESwitch(e, cases, edef):
       {
@@ -642,7 +641,7 @@ class ContinuationDetail
             if (c.expr == null) {
               transformedCases.push({ expr: rest([]), guard: c.guard, values: c.values });
             } else {
-              transformedCases.push({ expr: transform(c.expr, 0, inAsyncLoop, rest), guard: c.guard, values: c.values });
+              transformedCases.push({ expr: transform(c.expr, maxOutputs, inAsyncLoop, rest), guard: c.guard, values: c.values });
             }
           }
 
@@ -652,7 +651,7 @@ class ContinuationDetail
           } else if ( edef.expr == null ) {
             transformedDefault = rest([]);
           } else {
-            transformedDefault = transform(edef, 0, inAsyncLoop, rest);
+            transformedDefault = transform(edef, maxOutputs, inAsyncLoop, rest);
           }
 
           return {
@@ -679,7 +678,7 @@ class ContinuationDetail
         switch (returnExpr.expr)
         {
           case EMeta({name:"await", params:[], pos:_}, {expr:ECall(e, originParams), pos:_}):
-            // Optimization: pass continuation 
+            // Optimization: pass continuation
             function transformNext(i:Int, transformedParameters:Array<Expr>):Expr
             {
               if (i == originParams.length)
@@ -819,7 +818,7 @@ class ContinuationDetail
       }
       case EIf(econd, eif, eelse):
       {
-        return transformCondition(origin.pos, inAsyncLoop, econd, eif, eelse, rest);
+        return transformCondition(origin.pos, maxOutputs, inAsyncLoop, econd, eif, eelse, rest);
       }
       case EFunction(_, _):
       {
@@ -993,7 +992,7 @@ class ContinuationDetail
         {
           if (i == exprs.length - 1)
           {
-            return transform(exprs[i], 0, inAsyncLoop, rest);
+            return transform(exprs[i], maxOutputs, inAsyncLoop, rest);
           }
           else
           {
@@ -1004,7 +1003,7 @@ class ContinuationDetail
                 var next = i+1;
                 while ( next < exprs.length-1 ) {
                   if ( !requiresTransform(inAsyncLoop, exprs[next]) ) {
-                    transformedLine.push(exprs[next++]); 
+                    transformedLine.push(exprs[next++]);
                   } else {
                     break;
                   }
@@ -1025,7 +1024,7 @@ class ContinuationDetail
       {
         return transform(
           e1,
-          0,
+          1,
           inAsyncLoop,
           function(e1Result)
           {
@@ -1147,11 +1146,11 @@ class ContinuationDetail
   }
 
   public static function hasAsyncCall( expr : Expr ) : Bool {
-    var found = false; 
+    var found = false;
     function f(e:Expr) {
       if ( e != null && e.expr != null ) {
         switch ( e.expr ) {
-        case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+        case EMeta({name:"await", params:_, pos:_}, {expr:ECall(_, _), pos:_}): found = true;
         case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
         case EFunction(_,_):
         case _: haxe.macro.ExprTools.iter(e, f);
@@ -1164,12 +1163,12 @@ class ContinuationDetail
 
   static function requiresTransform( inAsyncLoop:Bool, expr : Expr ) : Bool {
     if ( expr == null ) return false;
-    var found = false; 
+    var found = false;
     var stack = [expr];
     while ( stack.length > 0 ) {
       var e = stack.pop();
       switch ( e.expr ) {
-      case EMeta({name:"await", params:[], pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+      case EMeta({name:"await", params:_, pos:_}, {expr:ECall(_, _), pos:_}): found = true;
       case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
       case EReturn(_): found = true;
       case EBreak, EContinue: if ( inAsyncLoop ) found = true;
@@ -1182,7 +1181,7 @@ class ContinuationDetail
 
   static inline function transformAsync(e:Expr, numArgs:Int, inAsyncLoop:Bool, pos:Position, originParams:Array<Expr>, rest:Array<Expr>->Expr) : Expr {
     inline function transformFinal(transformedParameters:Array<Expr>) {
-      return transform(e, 0, inAsyncLoop, function(functionResult) {
+      return transform(e, 1, inAsyncLoop, function(functionResult) {
         var completion = function(defs, results) {
           transformedParameters.push(
           {
@@ -1204,83 +1203,38 @@ class ContinuationDetail
           };
         };
 
-        if ( numArgs == 0 ) {
-          // See if we're calling our super class
-          // This avoids Haxe complaining about creating a closure on super
-          var exprToType = unpack(functionResult, pos);
-          switch ( exprToType.expr ) {
-          case EField({expr:EConst(CIdent("super")), pos:_}, fnName):
-            exprToType = macro this.$fnName;
-          case _:
-          }
-
-          // Number of outputs wasn't specified, need to inspect the caller.
-          // We have to delay here, because the type of the expression may not be valid until the code generation 
-          // has unrolled.
-          // Delaying also ensures that we do not exceed the stack size of the macro processor, due to recursive
-          // invocation of cps macros.
-          var solved = null;
-          return delay(e.pos, function() {
-            var type = Context.follow(Context.typeof(exprToType));
-            // protect reentrancy
-            if ( solved != null ) {
-              return solved;
-            }
-
-            var handlerArgResult = [];
-            var handlerArgDefs = [];
-            switch ( type ) {
-            case TFun(args, _):
-              switch ( Context.follow(args[args.length-1].t) ) {
-              case TFun(handlerArgs, _): 
-                numArgs = handlerArgs.length;
-                for ( handlerArg in handlerArgs ) {
-                  var name = "__parameter_" + seed++;
-                  handlerArgResult.push(
-                    {
-                      pos: pos,
-                      expr: EConst(CIdent(name))
-                    });
-                  handlerArgDefs.push(
-                    {
-                      opt: handlerArg.opt,
-                      name: name,
-                      type: null,
-                      value: null
-                    });
-                }
-              case _: numArgs = 0;
-              }
-            case _: Context.error("@await can only be used on a function call", e.pos);
-            }
-            solved = completion(handlerArgDefs, handlerArgResult);
-            return solved;
-          });
-        } else {
-          // Assume the number of outputs is the number of vars we're assigning to.
-          // This is typically one, unless the syntax "var x, y = @await foo()" is used.
-          var handlerArgResult = [];
-          var handlerArgDefs = [];
-
-          for ( i in 0...numArgs )
-          {
-            var name = "__parameter_" + seed++;
-            handlerArgResult.push(
-              {
-                pos: pos,
-                expr: EConst(CIdent(name))
-              });
-            handlerArgDefs.push(
-              {
-                opt: false,
-                name: name,
-                type: null,
-                value: null
-              });
-          }
-
-          return completion(handlerArgDefs, handlerArgResult);
+        // See if we're calling our super class
+        // This avoids Haxe complaining about creating a closure on super
+        var exprToType = unpack(functionResult, pos);
+        switch ( exprToType.expr ) {
+        case EField({expr:EConst(CIdent("super")), pos:_}, fnName):
+          exprToType = macro this.$fnName;
+        case _:
         }
+
+        // Assume the number of outputs is the number of vars we're assigning to.
+        // This is typically one, unless the syntax "var x, y = @await foo()" is used.
+        var handlerArgResult = [];
+        var handlerArgDefs = [];
+
+        for ( i in 0...numArgs )
+        {
+          var name = "__parameter_" + seed++;
+          handlerArgResult.push(
+            {
+              pos: pos,
+              expr: EConst(CIdent(name))
+            });
+          handlerArgDefs.push(
+            {
+              opt: false,
+              name: name,
+              type: null,
+              value: null
+            });
+        }
+
+        return completion(handlerArgDefs, handlerArgResult);
       });
     }
 
@@ -1304,33 +1258,9 @@ class ContinuationDetail
       }
     }
 
-    return ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) ) 
+    return ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) )
       ? transformFinal(originParams.copy()) : transformNext(0, []);
   }
 
-  static var nextDelayedID = 0;
-  static var delayFunctions = new Array<Void->Expr>();
-
-  static function delay(pos:Position, delayedFunction:Void->Expr):Expr
-  {
-    var id = nextDelayedID++;
-    var idExpr = Context.makeExpr(id, Context.currentPos());
-    delayFunctions[id] = delayedFunction;
-    return
-    {
-      pos: pos,
-      expr: ECall(macro com.dongxiguo.continuation.Continuation.ContinuationDetail.runDelayedFunction, [idExpr]),
-    }
-  }
-
   #end
-
-  #if haxe3
-  @:noUsing macro public static function runDelayedFunction(id:Int):Expr
-  #else
-  @:noUsing @:macro public static function runDelayedFunction(id:Int):Expr
-  #end
-  {
-    return delayFunctions[id]();
-  }
 }
