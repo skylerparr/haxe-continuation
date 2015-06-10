@@ -287,6 +287,8 @@ class ContinuationDetail
         if ( !hasAsyncCall(forkExpr) ) {
           Context.warning('@fork used, but no asynchronous calls are made in expression', origin.pos);
         }
+        verifyNoReturn(forkExpr);
+
         var fork = macro {
           if ( !Lambda.empty($it) ) {
             var $ident, __join = @await com.dongxiguo.continuation.utils.ForkJoin.fork($it);
@@ -1260,6 +1262,15 @@ class ContinuationDetail
 
     return ( !originParams.exists(requiresTransform.bind(inAsyncLoop)) )
       ? transformFinal(originParams.copy()) : transformNext(0, []);
+  }
+
+  static function verifyNoReturn(expr:Expr) : Void {
+    switch (expr.expr) {
+    case EReturn(_):
+      Context.error('cannot return within a @fork', expr.pos);
+    default:
+      haxe.macro.ExprTools.iter(expr, verifyNoReturn);
+    }
   }
 
   #end
