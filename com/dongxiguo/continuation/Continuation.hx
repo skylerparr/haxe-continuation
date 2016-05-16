@@ -846,16 +846,8 @@ class ContinuationDetail
             return transform(
               macro
               {
-                var __iterator = null;
-                {
-                  inline function setIterator<T>(
-                    iterable:Iterable<T> = null,
-                    iterator:Iterator<T> = null):Void
-                  {
-                    __iterator = iterable != null ? iterable.iterator() : iterator;
-                  }
-                  setIterator($e2);
-                }
+
+                var __iterator = com.dongxiguo.continuation.utils.IteratorHelper.get($e2);
                 while (__iterator.hasNext())
                 {
                   var $elementName = __iterator.next();
