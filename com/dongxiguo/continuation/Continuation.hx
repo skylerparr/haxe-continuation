@@ -283,7 +283,11 @@ class ContinuationDetail
     switch (origin.expr)
     {
       // @fork(identifier in iterable) { ... forked code ... }
+      #if haxe4
+      case EMeta({name:"fork", params:[{expr:EBinop(OpIn, {expr:EConst(CIdent(ident)), pos:_}, it), pos:_}]}, forkExpr):
+      #else
       case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(ident)), pos:_}, it), pos:_}]}, forkExpr):
+      #end
         if ( !hasAsyncCall(forkExpr) ) {
           Context.warning('@fork used, but no asynchronous calls are made in expression', origin.pos);
         }
@@ -744,7 +748,7 @@ class ContinuationDetail
       }
       case EObjectDecl(originFields):
       {
-        function transformNext(i:Int, transformedFields:Array<{ field : String, expr : Expr }>):Expr
+        function transformNext(i:Int, transformedFields):Expr
         {
           if (i == originFields.length)
           {
@@ -813,11 +817,13 @@ class ContinuationDetail
         }
         return transformNext(0, []);
       }
+      #if !haxe4
       case EIn(_, _):
       {
         // Unsupported. Don't change it.
         return rest([origin]);
       }
+      #end
       case EIf(econd, eif, eelse):
       {
         return transformCondition(origin.pos, maxOutputs, inAsyncLoop, econd, eif, eelse, rest);
@@ -835,7 +841,11 @@ class ContinuationDetail
 
         switch (it.expr)
         {
+          #if haxe4
+          case EBinop(OpIn, e1, e2):
+          #else
           case EIn(e1, e2):
+          #end
           {
             var elementName =
               switch (e1.expr)
@@ -1145,7 +1155,11 @@ class ContinuationDetail
       if ( e != null && e.expr != null ) {
         switch ( e.expr ) {
         case EMeta({name:"await", params:_, pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+        #if haxe4
+        case EMeta({name:"fork", params:[{expr:EBinop(OpIn, {expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
+        #else
         case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
+        #end
         case EFunction(_,_):
         case _: haxe.macro.ExprTools.iter(e, f);
         }
@@ -1163,7 +1177,11 @@ class ContinuationDetail
       var e = stack.pop();
       switch ( e.expr ) {
       case EMeta({name:"await", params:_, pos:_}, {expr:ECall(_, _), pos:_}): found = true;
+      #if haxe4
+      case EMeta({name:"fork", params:[{expr:EBinop(OpIn, {expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
+      #else
       case EMeta({name:"fork", params:[{expr:EIn({expr:EConst(CIdent(_)), pos:_}, _), pos:_}]}, _): found = true;
+      #end
       case EReturn(_): found = true;
       case EBreak, EContinue: if ( inAsyncLoop ) found = true;
       case EFunction(_,_):
