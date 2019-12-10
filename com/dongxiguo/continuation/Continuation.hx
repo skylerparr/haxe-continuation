@@ -528,7 +528,7 @@ class ContinuationDetail
         {
           pos: origin.pos,
           expr: EFunction(
-            endTryName,
+            #if haxe4 FNamed(endTryName) #else endTryName #end,
             {
               ret: null,
               params: [],
