@@ -528,7 +528,7 @@ class ContinuationDetail
         {
           pos: origin.pos,
           expr: EFunction(
-            endTryName,
+            FAnonymous,
             {
               ret: null,
               params: [],
