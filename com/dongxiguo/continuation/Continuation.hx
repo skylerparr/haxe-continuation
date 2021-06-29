@@ -823,6 +823,12 @@ class ContinuationDetail
         // Unsupported. Don't change it.
         return rest([origin]);
       }
+			#else
+      case EIs(_, _):
+      {
+        // Unsupported. Don't change it.
+        return rest([origin]);
+      }
       #end
       case EIf(econd, eif, eelse):
       {
